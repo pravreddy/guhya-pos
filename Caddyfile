@@ -1,0 +1,15 @@
+# guhya-pos — auto HTTPS via Caddy (Let's Encrypt), zero cert config.
+# The live blue/green target lives in active_guhya_pos.conf, which deploy.sh
+# rewrites and reloads — same idea as care-ai's active_docsign.conf.
+{$GUHYA_POS_DOMAIN:pos.guhya.co.in} {
+	import active_guhya_pos.conf
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
+www.{$GUHYA_POS_DOMAIN:pos.guhya.co.in} {
+	redir https://{$GUHYA_POS_DOMAIN:pos.guhya.co.in}{uri} permanent
+}
