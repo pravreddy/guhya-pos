@@ -2,63 +2,59 @@
 
 guhya-pos runs as another app behind the existing `careai-nginx`, reusing the
 shared `careai-postgres`, `careai-redis`, and the `careai-net` network — exactly
-like docsign. Nothing here touches Care AI, SignSimple, or mail; every step is
-additive and gated by `nginx -t`.
+like docsign. Every step is additive and gated by `nginx -t`, so it never
+touches Care AI, SignSimple, or mail.
 
-Files in this folder:
-- `docker-compose.guhya.yml` -> goes to `~/careai/docker-compose.guhya.yml`
-- `pos.guhya.co.in.conf`     -> goes to `~/careai/site-confs/pos.guhya.co.in.conf`
-- `.env.guhya.example`       -> copy to `~/careai/.env.guhya` and fill in
+## What's here
+- `docker-compose.guhya.yml`  — the blue/green container overlay
+- `pos.guhya.co.in.conf`      — the nginx route (blue/green switch variable)
+- `.env.guhya.example`        — env template (SECRET_KEY etc.)
+- `01-cert-guhya.sh`          — issues + installs the TLS cert (run with sudo)
+- `02-deploy-guhya.sh`        — DB + image + container + nginx route (run as deploy)
 
-## One-time: image
+## One-time prerequisites
+1. The GitHub Action (`.github/workflows/build.yml`) has pushed
+   `ghcr.io/pravreddy/guhya-pos-api:latest`. (Check the Actions tab is green.)
+2. DNS: an A record  pos.guhya.co.in -> the server IP.
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) builds and pushes
-`ghcr.io/pravreddy/guhya-pos-api:latest` on every push to main. Make sure that
-workflow has run green once before deploying, so the image exists to pull.
+## Deploy (on the server)
 
-## Go-live (run on the server, in ~/careai)
+```
+# get the repo (or: cd ~/guhya-pos && git pull)
+cd ~ && git clone git@github.com:pravreddy/guhya-pos.git
+cd ~/guhya-pos/deploy/avyangah
 
-1) DNS: add an A record  pos.guhya.co.in -> <server IP>.
+# 1. cert for pos.guhya.co.in (needs sudo; mirrors your 01-issue-certs.sh)
+sudo bash 01-cert-guhya.sh
 
-2) Put the two files in place (clone guhya-pos on the server, or scp them):
-     cp <guhya-pos>/deploy/avyangah/docker-compose.guhya.yml  ~/careai/
-     cp <guhya-pos>/deploy/avyangah/pos.guhya.co.in.conf      ~/careai/site-confs/   # don't reload yet
-     cp <guhya-pos>/deploy/avyangah/.env.guhya.example        ~/careai/.env.guhya
-     # edit ~/careai/.env.guhya: set a real SECRET_KEY
+# 2. deploy: creates guhya_pos DB, pulls image, starts container,
+#    installs the nginx route, validates, reloads.
+bash 02-deploy-guhya.sh
+#    -> first run will create .env.guhya and stop; set a real SECRET_KEY:
+#       nano ~/careai/.env.guhya     # SECRET_KEY=...  (generate one below)
+#       python3 -c "import secrets; print(secrets.token_urlsafe(50))"
+#    then run  bash 02-deploy-guhya.sh  again.
 
-3) Create the database in the shared Postgres:
-     docker exec careai-postgres psql -U careai -c "CREATE DATABASE guhya_pos OWNER careai;"
+# 3. admin login
+docker exec -it guhya-pos-api-blue python manage.py createsuperuser
+```
 
-4) Provision the TLS cert for pos.guhya.co.in with the SAME tool you used for
-   guhya.co.in. The nginx block expects the files at:
-     /mnt/nvme_data/ssl/pos.guhya.co.in-fullchain.pem
-     /mnt/nvme_data/ssl/pos.guhya.co.in-privkey.pem
+Test: `curl -s https://pos.guhya.co.in/ping` -> `{"status":"ok"}`, then
+`/admin/` and `/api/` in a browser.
 
-5) Pull + start the API (migrate runs automatically against guhya_pos):
-     docker login ghcr.io -u pravreddy           # if not already logged in
-     docker compose -f docker-compose.yml -f docker-compose.guhya.yml pull guhya-pos-api-blue
-     docker compose -f docker-compose.yml -f docker-compose.guhya.yml up -d guhya-pos-api-blue
-     docker compose -f docker-compose.yml -f docker-compose.guhya.yml logs -f guhya-pos-api-blue   # watch migrate
+## Updating later (new code)
+Push to main -> the Action builds a fresh image -> on the server just:
+```
+cd ~/guhya-pos && git pull && cd deploy/avyangah && bash 02-deploy-guhya.sh
+```
 
-6) Test the route + reload nginx (the conf was already copied in step 2):
-     docker exec careai-nginx nginx -t            # MUST say "test is successful"
-     docker exec careai-nginx nginx -s reload     # graceful; other sites unaffected
+## Blue/green (zero-downtime)
+`bash 02-deploy-guhya.sh green` brings up the green container, repoints the
+nginx route to it, validates and reloads. Then stop the old colour:
+`docker compose -f ~/careai/docker-compose.yml -f ~/careai/docker-compose.guhya.yml stop guhya-pos-api-blue`
 
-7) Admin user:
-     docker exec -it guhya-pos-api-blue python manage.py createsuperuser
-
-Then: https://pos.guhya.co.in/ping -> {"status":"ok"}, /admin/, /api/.
-
-## Blue/green (later, for zero-downtime updates)
-
-- start green:   docker compose -f docker-compose.yml -f docker-compose.guhya.yml --profile guhya-green up -d guhya-pos-api-green
-- flip the conf: edit ~/careai/site-confs/pos.guhya.co.in.conf, change
-                 `set $guhya_backend "guhya-pos-api-blue:8000";` to green, then
-                 docker exec careai-nginx nginx -t && docker exec careai-nginx nginx -s reload
-- stop blue:     docker compose ... stop guhya-pos-api-blue
-(A small deploy-guhya.sh can automate this later, mirroring deploy-docsign.sh.)
-
-## Rollback / safety
-- Bad nginx conf? `nginx -t` fails -> DON'T reload; fix or `rm` the file. The
-  running nginx keeps serving until a successful reload, so other sites are safe.
-- Bad app? `docker compose ... stop guhya-pos-api-blue` — only guhya is affected.
+## Safety / rollback
+- Bad nginx conf -> `nginx -t` fails -> the script stops BEFORE reload, so the
+  running nginx keeps serving every site untouched.
+- Bad app build -> only the guhya container is affected; stop it and the other
+  apps are unaffected.
