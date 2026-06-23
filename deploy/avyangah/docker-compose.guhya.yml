@@ -1,0 +1,62 @@
+# =============================================================
+# Guhya POS — overlay for the shared "careai" stack on the Hetzner box.
+# This is the REAL deploy for the shared server (the deploy/hetzner/ folder
+# with its own Caddy/Postgres is the old standalone version — NOT used here).
+#
+# Lives on the server at ~/careai/docker-compose.guhya.yml
+# Run from ~/careai:
+#   docker compose -f docker-compose.yml -f docker-compose.guhya.yml up -d guhya-pos-api-blue
+#
+# Reuses the shared careai-postgres (user 'careai', db 'guhya_pos'),
+# careai-redis, and the careai-net network. Image is pulled from ghcr,
+# same as careai-api / docsign-api.
+# =============================================================
+
+services:
+
+  guhya-pos-api-blue:
+    image: ghcr.io/${GITHUB_USER}/guhya-pos-api:latest
+    container_name: guhya-pos-api-blue
+    restart: unless-stopped
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
+    env_file: .env.guhya
+    environment:
+      - DEBUG=0
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=guhya_pos
+      - POSTGRES_USER=careai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_URL=redis://redis:6379/2
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [careai-net]
+
+  # Second colour for zero-downtime deploys. Start only during a deploy:
+  #   docker compose -f docker-compose.yml -f docker-compose.guhya.yml --profile guhya-green up -d guhya-pos-api-green
+  guhya-pos-api-green:
+    image: ghcr.io/${GITHUB_USER}/guhya-pos-api:latest
+    container_name: guhya-pos-api-green
+    restart: "no"
+    profiles: ["guhya-green"]
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
+    env_file: .env.guhya
+    environment:
+      - DEBUG=0
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=guhya_pos
+      - POSTGRES_USER=careai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_URL=redis://redis:6379/2
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [careai-net]
