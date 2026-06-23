@@ -1,0 +1,37 @@
+from django.db import models
+from .current import get_current_tenant
+
+class Tenant(models.Model):
+    """One restaurant. Everything else is scoped to a Tenant."""
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+class TenantQuerySet(models.QuerySet):
+    def for_current(self):
+        """Use in API/views to return ONLY the current restaurant's rows.
+        Returns nothing if there is no tenant context (safe default)."""
+        tenant = get_current_tenant()
+        if tenant is None:
+            return self.none()
+        return self.filter(tenant=tenant)
+
+class TenantAwareModel(models.Model):
+    """Base class: gives every model a tenant and auto-fills it on save."""
+    tenant = models.ForeignKey("tenancy.Tenant", on_delete=models.CASCADE)
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            self.tenant = get_current_tenant()
+        super().save(*args, **kwargs)

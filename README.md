@@ -5,7 +5,7 @@ every restaurant (tenant) sees only its own data, scoped by a middleware —
 the same pattern as your other apps. Owners/admins manage everything from the
 Django admin.
 
-## What's inside (version one foundation)
+## What's inside
 
 - `tenancy/` — the `Tenant` model, a `CurrentTenantMiddleware` that resolves the
   restaurant from the logged-in user, and a `TenantAwareModel` base that scopes
@@ -17,6 +17,8 @@ Django admin.
 - `orders/` — `Table`, `Order` (with a `source`: dine-in / online / aggregator),
   `OrderLine` (price + GST snapshots so old bills never change), `Payment`
   (cash / UPI / card).
+- `api/` — the cashier REST API (DRF): login, menu, tables, and an order flow
+  (open table, add/merge lines, take payment, kitchen queue).
 
 ## Run it
 
@@ -40,7 +42,7 @@ Django admin.
    ```
    python manage.py runserver
    ```
-   Visit http://localhost:8000/admin/
+   Visit http://localhost:8000/admin/ and the API at http://localhost:8000/api/
 
 ## First steps in the admin
 
@@ -49,22 +51,26 @@ Django admin.
 3. Add menu categories and items.
 4. Add tables.
 
-## In your app code (API / views), scope to the current restaurant:
+## Cashier API (scoped to the logged-in user's restaurant)
+
+- `POST /api/auth/login/` → token + role + tenant
+- `GET  /api/menu/` · `GET /api/tables/`
+- `POST /api/orders/` (open) · `GET /api/orders/?status=active`
+- `POST /api/orders/{id}/add_line/` · `update_line/` · `remove_line/`
+- `POST /api/orders/{id}/set_status/` · `pay/`
+- `GET  /api/orders/kitchen/` (live queue)
+
+## In your own code, scope to the current restaurant
 
 ```python
 MenuItem.objects.for_current()      # only this restaurant's items
 Order.objects.for_current()         # only this restaurant's orders
 ```
 
-`for_current()` reads the tenant the middleware set for the request. Plain
-`.objects` is unscoped and is what the admin uses (a superuser sees all
-restaurants, with a tenant filter on every list).
+## What's next
 
-## What's next (not in this foundation yet)
-
-- REST API for the cashier flow (open table, add lines, take payment).
-- Kitchen display: WebSocket push of order/line status.
-- Menu onboarding: spreadsheet drop / photo / voice (your LLM normalises it).
-- Voice ordering: your speech-to-text-to-JSON pipeline creates OrderLines.
+- Kitchen display: WebSocket push of order/line status (Redis already in compose).
+- Menu onboarding: spreadsheet drop / photo / voice (LLM normalises it).
+- Voice ordering: speech-to-text-to-JSON pipeline creates OrderLines.
 - React + PWA frontend; Capacitor Android wrapper when the printer needs it.
-- Aggregator lane: manual entry first, connector (UrbanPiper/Dyno) later.
+- Role-based endpoint permissions (who can take payment / change kitchen status).

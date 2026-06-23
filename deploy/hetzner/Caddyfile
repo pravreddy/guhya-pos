@@ -1,0 +1,26 @@
+# guhya-pos — Caddy (auto HTTPS). One instance serves Cafe Gopal now; add more
+# restaurants later by adding their domains as new blocks.
+
+# --- Cafe Gopal: the POS (cashier / kitchen / admin) ---
+{$POS_DOMAIN:pos.cafegopal.co.in} {
+	import active_guhya_pos.conf
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
+# --- Cafe Gopal: the public website (static files in ./sites/cafegopal) ---
+{$SITE_DOMAIN:cafegopal.co.in} {
+	root * /srv/cafegopal
+	encode gzip
+	file_server
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+	}
+}
+www.{$SITE_DOMAIN:cafegopal.co.in} {
+	redir https://{$SITE_DOMAIN:cafegopal.co.in}{uri} permanent
+}

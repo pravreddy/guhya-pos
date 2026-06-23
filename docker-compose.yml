@@ -1,0 +1,13 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: guhya-pos
+      POSTGRES_USER: guhya-pos
+      POSTGRES_PASSWORD: guhya-pos
+    ports:
+      - "5433:5432"
+    volumes:
+      - guhya_pos_db:/var/lib/postgresql/data
+volumes:
+  guhya_pos_db:
