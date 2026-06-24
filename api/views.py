@@ -2,7 +2,9 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth import authenticate
 from django.db import transaction
 from rest_framework import viewsets, permissions
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action, api_view, permission_classes, authentication_classes,
+)
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 
@@ -34,6 +36,7 @@ class TenantViewMixin:
 
 
 @api_view(["POST"])
+@authentication_classes([])  # no session auth on login -> no CSRF (SPA uses tokens)
 @permission_classes([permissions.AllowAny])
 def login(request):
     user = authenticate(
