@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Guhya POS</title>
+  <title>POS</title>
   <style>
     /* ---- Theme tokens (per-tenant branding will override these later) ---- */
     :root {
@@ -164,7 +164,7 @@
     const { useState, useEffect, useCallback, useRef } = React;
 
     // ---------------- auth + api ----------------
-    const KEY = 'guhya.auth';
+    const KEY = 'pos.auth';
     const loadAuth = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } };
     const saveAuth = (a) => localStorage.setItem(KEY, JSON.stringify(a));
     const clearAuth = () => localStorage.removeItem(KEY);
@@ -199,7 +199,7 @@
       return html`
         <div class="login-wrap">
           <div class="login-card">
-            <h1>Guhya POS</h1>
+            <h1>POS</h1>
             <p>Sign in to your restaurant</p>
             ${err && html`<div class="err">${err}</div>`}
             <div class="field"><label>Username</label>
@@ -435,8 +435,8 @@
       return html`
         <div class="shell">
           <div class="topbar">
-            <span class="brand">Guhya POS</span>
-            ${auth.tenant && html`<span class="tenant">${auth.tenant.name}</span>`}
+            <span class="brand">${auth.tenant ? auth.tenant.name : 'POS'}</span>
+            <span class="tenant">POS</span>
             <div class="spacer"></div>
             <div class="nav">
               ${allowed.map(k => html`<button key=${k} class=${tab === k ? 'active' : ''} onClick=${() => setTab(k)}>${TABS[k].label}</button>`)}
