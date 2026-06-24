@@ -6,7 +6,7 @@ Seed a demo restaurant so the app is usable immediately (no admin needed).
 Idempotent: safe to run more than once. Creates:
   - tenant "Cafe Gopala"
   - links any superuser (no tenant) to it as owner, so you can log in
-  - demo logins  cashier/cashier123  and  kitchen/kitchen123
+  - demo logins  owner/owner123  cashier/cashier123  kitchen/kitchen123
   - tables T1-T6
   - a starter South-Indian menu (GST 5%)
 """
@@ -60,7 +60,11 @@ class Command(BaseCommand):
             self.stdout.write(f"Linked superuser '{su.username}' -> {tenant.name} (owner)")
 
         # Demo staff logins for testing role-based screens.
-        for uname, role in [("cashier", User.Role.CASHIER), ("kitchen", User.Role.KITCHEN)]:
+        # owner/owner123 lets you use the app as an owner WITHOUT the Django
+        # superuser (keep the superuser just for /admin/).
+        for uname, role in [("owner", User.Role.OWNER),
+                            ("cashier", User.Role.CASHIER),
+                            ("kitchen", User.Role.KITCHEN)]:
             u, c = User.objects.get_or_create(
                 username=uname, defaults={"tenant": tenant, "role": role})
             if c:
@@ -86,5 +90,5 @@ class Command(BaseCommand):
                               "food_type": ftype, "gst_rate": gst})
 
         self.stdout.write(self.style.SUCCESS(
-            f"Done. Log in at the app as your superuser (owner), "
-            f"or cashier/cashier123, or kitchen/kitchen123."))
+            f"Done. Log in at the app as owner/owner123 (or your superuser), "
+            f"cashier/cashier123, or kitchen/kitchen123."))
