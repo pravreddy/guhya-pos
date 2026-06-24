@@ -46,6 +46,37 @@ talks to the `/api/` that's already built, using token login for access per role
 **Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
 starter menu, links the superuser as owner, and adds cashier/kitchen logins.
 
+## Go-to-market: self-service onboarding (GATED: only AFTER POS is proven end-to-end on pos.guhya.co.in with Cafe Gopala)
+
+Goal: a restaurant can sign up online and start using the POS with NO sales call.
+We (super admin) only approve or reject. First 3 months free as the launch hook.
+The architecture already supports this (row-level multi-tenant) — this is exposing
+it, not rebuilding.
+
+- [ ] **Public signup page on a separate URL** (e.g. `get.guhya.co.in` or a page
+      on guhya-website). POS app stays behind login; signup is the only public door.
+      Collect: restaurant name, owner name, phone, email, city (GST/FSSAI optional).
+- [ ] **Tenant lifecycle state.** Add to Tenant: `status` (pending / trial /
+      active / suspended / rejected) and `trial_ends_at`. Signup creates a
+      `pending` tenant + an owner user (inactive until approved). Do this when
+      building onboarding so billing slots in later with no migration scramble.
+- [ ] **Admin approve / reject** (one-click in admin, optional notes). Approving
+      activates the tenant, starts the 3-month trial, emails the owner their
+      login. "Call / email the restaurant first" is an OPTIONAL manual choice,
+      never a required step — so it doesn't become a growth bottleneck.
+- [ ] **Anti-abuse:** email/phone OTP verification + signup rate-limiting, so the
+      manual gate isn't drowning in spam. Never auto-activate.
+- [ ] **Activation is the real metric, not signups.** Wire menu onboarding
+      (spreadsheet / photo / voice → LLM, see below) into the signup flow so a new
+      restaurant gets its menu in FAST — that's what stops trial churn.
+- [ ] **Billing (later, when trials convert):** trial-expiry handling + a payment
+      rail (Razorpay for India). Trial → paid. Suspend on non-payment.
+- [ ] **Mobile / offline:** current app is already a PWA base. Add OFFLINE
+      RESILIENCE (queue orders locally, sync on reconnect) — POS must survive a
+      wifi blip mid-rush — before Play Store packaging via Capacitor.
+- [ ] **Infra:** new public URL = another `stacks/<app>` entry + cert + route in
+      avyangah-infra (same pattern as guhya-pos). Note in avyangah-infra BACKLOG.
+
 ## Now / next (after frontend foundation)
 - [ ] **Menu onboarding** — owner drops a spreadsheet / photo of the menu /
       speaks the items; an LLM normalises into MenuCategory + MenuItem
