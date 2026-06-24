@@ -1,8 +1,9 @@
+from functools import lru_cache
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, re_path, include
 from django.db import connection
-from django.http import JsonResponse
-from django.views.generic import TemplateView
+from django.http import JsonResponse, HttpResponse
 
 
 def ping(request):
@@ -17,9 +18,17 @@ def ping_db(request):
         return JsonResponse({"db": "error"}, status=503)
 
 
-# The single-page app shell. Served for "/" and any client-side route that
-# isn't an API / admin / static path (handled by the catch-all below).
-spa = TemplateView.as_view(template_name="index.html")
+@lru_cache(maxsize=1)
+def _spa_html():
+    # Served as a RAW file (not through the Django template engine), because the
+    # app's JS uses ${{ ... }} object literals that the template engine would try
+    # to parse as {{ variable }} tags. Cached; the container restarts on deploy.
+    return (settings.BASE_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+
+
+def spa(request):
+    return HttpResponse(_spa_html())
+
 
 urlpatterns = [
     path("ping", ping),
