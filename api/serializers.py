@@ -23,6 +23,26 @@ class MenuCategorySerializer(serializers.ModelSerializer):
         return MenuItemSerializer(items, many=True).data
 
 
+class MenuCategoryAdminSerializer(serializers.ModelSerializer):
+    """Full category for the owner's menu manager (incl. inactive)."""
+    class Meta:
+        model = MenuCategory
+        fields = ["id", "name", "sort_order", "is_active"]
+
+
+class MenuItemAdminSerializer(serializers.ModelSerializer):
+    """Writable item for the menu manager. Category must belong to the tenant."""
+    class Meta:
+        model = MenuItem
+        fields = ["id", "name", "category", "price", "half_price",
+                  "food_type", "gst_rate", "is_available"]
+
+    def validate_category(self, value):
+        if not MenuCategory.objects.for_current().filter(pk=value.pk).exists():
+            raise serializers.ValidationError("Category not found.")
+        return value
+
+
 class TableSerializer(serializers.ModelSerializer):
     class Meta:
         model = Table

@@ -414,10 +414,229 @@
         </div>`;
     }
 
+    // ---------------- Menu manager (owner/admin) ----------------
+    const FOOD_OPTS = [['veg', 'Veg'], ['nonveg', 'Non-veg'], ['egg', 'Egg']];
+    const selStyle = { width: '100%', padding: '10px', border: '1px solid var(--line)', borderRadius: '10px', background: 'var(--surface)' };
+
+    function MenuManager() {
+      const [cats, setCats] = useState([]);
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [editItem, setEditItem] = useState(null);   // existing item, or { category } for new
+      const [importCat, setImportCat] = useState(null); // category id for the import modal
+      const [newCat, setNewCat] = useState('');
+
+      const load = useCallback(async () => {
+        setLoading(true);
+        try {
+          const [c, i] = await Promise.all([api('/menu-categories/'), api('/menu-items/')]);
+          setCats((c || []).slice().sort((a, b) => a.sort_order - b.sort_order));
+          setItems(i || []);
+        } catch (e) { alert(e.message); } finally { setLoading(false); }
+      }, []);
+      useEffect(() => { load(); }, [load]);
+
+      const addCategory = async () => {
+        const name = newCat.trim(); if (!name) return;
+        try { await api('/menu-categories/', { method: 'POST', body: { name, sort_order: cats.length } }); setNewCat(''); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const renameCategory = async (cat) => {
+        const name = prompt('Category name', cat.name); if (name == null) return;
+        try { await api('/menu-categories/' + cat.id + '/', { method: 'PATCH', body: { name: name.trim() } }); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const deleteCategory = async (cat) => {
+        if (!confirm('Delete category "' + cat.name + '"?')) return;
+        try { await api('/menu-categories/' + cat.id + '/', { method: 'DELETE' }); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const deleteItem = async (it) => {
+        if (!confirm('Delete "' + it.name + '"?')) return;
+        try { await api('/menu-items/' + it.id + '/', { method: 'DELETE' }); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const toggleAvail = async (it) => {
+        try { await api('/menu-items/' + it.id + '/', { method: 'PATCH', body: { is_available: !it.is_available } }); load(); }
+        catch (e) { alert(e.message); }
+      };
+
+      if (loading) return html`<div class="center-msg">Loading menu…</div>`;
+
+      return html`
+        <div style=${{ padding: '18px', maxWidth: '920px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+          <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px' }}>
+            <h2 style=${{ margin: 0, flex: 1 }}>Menu</h2>
+            <input placeholder="New category" value=${newCat} onChange=${e => setNewCat(e.target.value)}
+                   onKeyDown=${e => e.key === 'Enter' && addCategory()}
+                   style=${{ padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+            <button class="btn sm" onClick=${addCategory}>Add category</button>
+          </div>
+
+          ${cats.length === 0 && html`<div class="empty">No categories yet. Add one above to start building the menu.</div>`}
+
+          ${cats.map(cat => {
+            const its = items.filter(i => i.category === cat.id);
+            return html`
+              <div key=${cat.id} style=${{ marginBottom: '22px', background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '7px', padding: '12px 14px', borderBottom: '1px solid var(--line)' }}>
+                  <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>${cat.name}</b>
+                  <button class="btn ghost sm" onClick=${() => setImportCat(cat.id)}>Import list</button>
+                  <button class="btn sm" onClick=${() => setEditItem({ category: cat.id })}>+ Item</button>
+                  <button class="btn ghost sm" onClick=${() => renameCategory(cat)}>Rename</button>
+                  <button class="btn ghost sm" onClick=${() => deleteCategory(cat)}>Delete</button>
+                </div>
+                ${its.length === 0 && html`<div style=${{ padding: '12px 14px', color: 'var(--ink-soft)', fontSize: '14px' }}>No items yet.</div>`}
+                ${its.map(it => html`
+                  <div key=${it.id} style=${{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderBottom: '1px solid var(--line)', opacity: it.is_available ? 1 : 0.5 }}>
+                    <span class=${'dot ' + (FOOD[it.food_type] || '')}></span>
+                    <div style=${{ flex: 1 }}>
+                      <div style=${{ fontWeight: 600 }}>${it.name}</div>
+                      <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>
+                        ${rupee(it.price)}${Number(it.half_price) > 0 ? ' · half ' + rupee(it.half_price) : ''} · GST ${it.gst_rate}%</div>
+                    </div>
+                    <button class="btn ghost sm" onClick=${() => toggleAvail(it)}>${it.is_available ? 'Available' : 'Hidden'}</button>
+                    <button class="btn ghost sm" onClick=${() => setEditItem(it)}>Edit</button>
+                    <button class="btn ghost sm" onClick=${() => deleteItem(it)}>Delete</button>
+                  </div>`)}
+              </div>`;
+          })}
+
+          ${editItem && html`<${ItemModal} item=${editItem} cats=${cats}
+              onClose=${() => setEditItem(null)} onSaved=${() => { setEditItem(null); load(); }} />`}
+          ${importCat != null && html`<${ImportModal} categoryId=${importCat}
+              onClose=${() => setImportCat(null)} onDone=${() => { setImportCat(null); load(); }} />`}
+        </div>`;
+    }
+
+    function ItemModal({ item, cats, onClose, onSaved }) {
+      const isNew = !item.id;
+      const [f, setF] = useState({
+        name: item.name || '', price: item.price || '', half_price: item.half_price || '',
+        food_type: item.food_type || 'veg', gst_rate: item.gst_rate != null ? item.gst_rate : 5,
+        is_available: item.is_available != null ? item.is_available : true,
+        category: item.category || (cats[0] && cats[0].id),
+      });
+      const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+      const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+      const save = async () => {
+        setErr(''); setBusy(true);
+        const body = { ...f, half_price: f.half_price === '' ? null : f.half_price };
+        try {
+          if (isNew) await api('/menu-items/', { method: 'POST', body });
+          else await api('/menu-items/' + item.id + '/', { method: 'PATCH', body });
+          onSaved();
+        } catch (e) { setErr(e.message); setBusy(false); }
+      };
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()}>
+            <h3>${isNew ? 'New item' : 'Edit item'}</h3>
+            ${err && html`<div class="err">${err}</div>`}
+            <div class="field"><label>Name</label>
+              <input value=${f.name} onChange=${e => set('name', e.target.value)} autoFocus /></div>
+            <div style=${{ display: 'flex', gap: '10px' }}>
+              <div class="field" style=${{ flex: 1 }}><label>Price ₹</label>
+                <input value=${f.price} onChange=${e => set('price', e.target.value)} /></div>
+              <div class="field" style=${{ flex: 1 }}><label>Half ₹ (optional)</label>
+                <input value=${f.half_price} onChange=${e => set('half_price', e.target.value)} /></div>
+            </div>
+            <div style=${{ display: 'flex', gap: '10px' }}>
+              <div class="field" style=${{ flex: 1 }}><label>Type</label>
+                <select value=${f.food_type} onChange=${e => set('food_type', e.target.value)} style=${selStyle}>
+                  ${FOOD_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+                </select></div>
+              <div class="field" style=${{ flex: 1 }}><label>GST %</label>
+                <input value=${f.gst_rate} onChange=${e => set('gst_rate', e.target.value)} /></div>
+            </div>
+            <div class="field"><label>Category</label>
+              <select value=${f.category} onChange=${e => set('category', Number(e.target.value))} style=${selStyle}>
+                ${cats.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+              </select></div>
+            <label style=${{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0 14px', fontSize: '14px' }}>
+              <input type="checkbox" checked=${f.is_available} onChange=${e => set('is_available', e.target.checked)} />
+              Available (shown on the cashier screen)</label>
+            <div style=${{ display: 'flex', gap: '8px' }}>
+              <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
+              <button class="btn accent" style=${{ flex: 2 }} disabled=${busy || !f.name || f.price === '' || !f.category} onClick=${save}>
+                ${busy ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function ImportModal({ categoryId, onClose, onDone }) {
+      const [text, setText] = useState('');
+      const [rows, setRows] = useState(null);
+      const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+      const parse = () => {
+        const out = text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+          const m = line.match(/^(.*?)[\s,\-–]+(\d+(?:\.\d+)?)\s*$/);
+          return m ? { name: m[1].trim(), price: m[2], food_type: 'veg', gst_rate: 5 }
+                   : { name: line, price: '', food_type: 'veg', gst_rate: 5 };
+        });
+        setRows(out);
+      };
+      const setRow = (i, k, v) => setRows(rs => rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
+      const removeRow = (i) => setRows(rs => rs.filter((_, j) => j !== i));
+      const ready = rows ? rows.filter(r => r.name && r.price !== '') : [];
+      const confirm = async () => {
+        setErr(''); setBusy(true);
+        try {
+          for (const r of ready) {
+            await api('/menu-items/', { method: 'POST', body: {
+              name: r.name, price: r.price, food_type: r.food_type,
+              gst_rate: r.gst_rate, is_available: true, category: categoryId,
+            } });
+          }
+          onDone();
+        } catch (e) { setErr(e.message + ' — some items may have been added.'); setBusy(false); }
+      };
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '520px' }}>
+            <h3>Import items</h3>
+            ${err && html`<div class="err">${err}</div>`}
+            ${!rows && html`
+              <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>
+                Paste one item per line, e.g. <b>Masala Dosa 80</b>. You'll review and edit before saving.
+                <br/>(Photo / spreadsheet AI import will plug into this same review step next.)</p>
+              <textarea value=${text} onChange=${e => setText(e.target.value)} rows=${8}
+                style=${{ width: '100%', padding: '10px', border: '1px solid var(--line)', borderRadius: '10px', fontFamily: 'inherit', fontSize: '14px' }}></textarea>
+              <div style=${{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
+                <button class="btn" style=${{ flex: 2 }} disabled=${!text.trim()} onClick=${parse}>Review</button>
+              </div>`}
+            ${rows && html`
+              <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>Review and fix, then save. Rows without a price are skipped.</p>
+              <div style=${{ maxHeight: '320px', overflowY: 'auto', margin: '4px 0 12px' }}>
+                ${rows.map((r, i) => html`
+                  <div key=${i} style=${{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                    <input value=${r.name} onChange=${e => setRow(i, 'name', e.target.value)}
+                      style=${{ flex: 2, padding: '7px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+                    <input value=${r.price} placeholder="₹" onChange=${e => setRow(i, 'price', e.target.value)}
+                      style=${{ width: '64px', padding: '7px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+                    <select value=${r.food_type} onChange=${e => setRow(i, 'food_type', e.target.value)}
+                      style=${{ padding: '7px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)' }}>
+                      ${FOOD_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+                    </select>
+                    <button class="btn ghost sm" onClick=${() => removeRow(i)}>✕</button>
+                  </div>`)}
+              </div>
+              <div style=${{ display: 'flex', gap: '8px' }}>
+                <button class="btn ghost" style=${{ flex: 1 }} onClick=${() => setRows(null)}>Back</button>
+                <button class="btn accent" style=${{ flex: 2 }} disabled=${busy || ready.length === 0} onClick=${confirm}>
+                  ${busy ? 'Saving…' : 'Add ' + ready.length + ' items'}</button>
+              </div>`}
+          </div>
+        </div>`;
+    }
+
     // ---------------- Shell + routing ----------------
     const TABS = {
       cashier: { label: 'Cashier', comp: Cashier, roles: ['owner', 'admin', 'cashier', 'waiter'] },
       kitchen: { label: 'Kitchen', comp: Kitchen, roles: ['owner', 'admin', 'kitchen'] },
+      menu:    { label: 'Menu',    comp: MenuManager, roles: ['owner', 'admin'] },
       home:    { label: 'Home',    comp: Home,    roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
     };
 

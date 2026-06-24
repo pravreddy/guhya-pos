@@ -1,6 +1,7 @@
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth import authenticate
 from django.db import transaction
+from django.db.models import ProtectedError
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import (
     action, api_view, permission_classes, authentication_classes,
@@ -9,10 +10,12 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 
 from tenancy.current import set_current_tenant
+from accounts.models import User
 from catalog.models import MenuCategory, MenuItem
 from orders.models import Table, Order, OrderLine, Payment
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
+    MenuCategoryAdminSerializer, MenuItemAdminSerializer,
 )
 
 
@@ -23,6 +26,18 @@ class HasTenant(permissions.BasePermission):
     def has_permission(self, request, view):
         u = request.user
         return bool(u and u.is_authenticated and getattr(u, "tenant_id", None))
+
+
+class IsOwnerOrAdmin(permissions.BasePermission):
+    """Menu management is owner/admin only — a cashier shouldn't edit the menu."""
+    message = "Only an owner or admin can manage the menu."
+
+    def has_permission(self, request, view):
+        u = request.user
+        return bool(
+            u and u.is_authenticated and getattr(u, "tenant_id", None)
+            and getattr(u, "role", None) in (User.Role.OWNER, User.Role.ADMIN)
+        )
 
 
 class TenantViewMixin:
@@ -61,6 +76,43 @@ class MenuViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return (MenuCategory.objects.for_current()
                 .filter(is_active=True).prefetch_related("items"))
+
+
+class MenuCategoryAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
+    """Owner/admin CRUD for menu categories (returns ALL, incl. inactive)."""
+    serializer_class = MenuCategoryAdminSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return MenuCategory.objects.for_current()
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "This category still has items. Delete or move them first."},
+                status=400,
+            )
+
+
+class MenuItemAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
+    """Owner/admin CRUD for menu items (returns ALL, incl. unavailable)."""
+    serializer_class = MenuItemAdminSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return MenuItem.objects.for_current().select_related("category")
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "This item is used in past orders. "
+                           "Mark it unavailable instead of deleting."},
+                status=400,
+            )
 
 
 class TableViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):

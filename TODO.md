@@ -10,6 +10,41 @@ staged so we ship something usable at every step rather than a big-bang.
       automated from laptop via `avyangah-infra/stacks/guhya-pos` (cert.sh + deploy.sh).
       `/ping` 200, `/admin/` and `/api/` working. Image from ghcr, blue/green ready.
 
+## ▶ Corrected priority order (2026-06-24, after market scan + review)
+
+Finish the core so a real cafe runs a FULL DAY, then the differentiated wedge.
+Near-term, in order:
+
+0. **Prove the loop** (testing now) — table -> items -> split pay -> table frees
+   -> kitchen ticket.
+1. **Menu management = write API + AI import (MERGED).** Writable
+   MenuItem/MenuCategory API (needed either way) + ONE menu-manager screen that
+   doubles as the AI "Review & Confirm" screen. Owner uploads a photo /
+   spreadsheet, LLM (care-ai pipeline) parses -> owner corrects + confirms on the
+   same screen. NOT a big manual CRUD then a separate AI tool. Also the
+   onboarding activation engine: upload menu -> see your dishes in <60s.
+   (Nuance: we still need a minimal edit UI — you must be able to fix a wrong
+   price — but AI does the heavy populate; the "CRUD" IS the review surface.)
+2. **Service modes** (dine_in / takeaway / both; default = hybrid) + treat
+   Counter/Takeaway as a permanent VIRTUAL TABLE (is_virtual / id 0) so one code
+   path serves both — a counter order is just an order on the virtual table.
+3. **WhatsApp digital bill + UPI QR** (PULLED UP — a cafe can't run a day without
+   a clean UPI flow). Bill on WhatsApp with a UPI deep-link QR: settles the bill
+   AND captures the phone number for CRM in one move (the Trojan horse). Thermal
+   receipt / KOT print alongside (Web Bluetooth / WebUSB from the PWA; expect
+   2-inch thermal formatting quirks — budget time for it).
+4. **Offline — Phase 1 (PULLED FORWARD, but phased).** Cache menu + tables in
+   IndexedDB so the screen still loads and an order can be BUILT when wifi drops
+   mid-rush, and queue pending order-writes locally. (Phase 2 = full sync +
+   conflict/duplicate handling on reconnect — harder, do after.) If staff can't
+   take an order during a blip, they abandon the system for pen + paper.
+5. **Role-based permissions** — lock endpoints per role before real staff use it.
+6. **Void / discount + day-close & weekly/monthly sales reports.**
+
+THEN the differentiated wedge (grows the restaurant's money, fits our AI/voice):
+CRM + loyalty + coupons + WhatsApp campaigns -> AI "Know" (read-only) first ->
+voice ordering -> white-label theming. Details in the sections below.
+
 ## Frontend — the real app (THE PRIORITY NOW)
 
 Why: the root URL shows "Not Found" because only `/ping`, `/admin/`, `/api/`
@@ -34,10 +69,13 @@ talks to the `/api/` that's already built, using token login for access per role
       `templates/index.html` + SPA catch-all. Root URL now shows a real login.
 - [x] **1. Cashier screen** — tables -> menu -> live GST bill -> split payment
       (cash/UPI/card). Uses the existing order endpoints.
-- [ ] **2. Menu setup screen** — owner adds/edits categories + items.
-      NEEDS BACKEND FIRST: `MenuViewSet` is read-only; add create/update/delete
-      endpoints (+ category write) before the edit UI. (Menu currently shows
-      read-only in the cashier screen; seeded via `manage.py seed_cafe`.)
+- [ ] **2. Menu management (write API + AI import, MERGED).** `MenuViewSet` is
+      read-only -> add create/update/delete for items + categories (needed either
+      way). Build ONE menu-manager screen (add/edit/delete) that ALSO serves as
+      the AI "Review & Confirm" screen: owner uploads a photo / spreadsheet of the
+      menu, the LLM (care-ai pipeline) parses it into MenuCategory/MenuItem, and
+      the owner corrects + confirms on that same screen. No separate manual CRUD
+      then AI tool. (The old standalone "Menu onboarding" item is now merged here.)
 - [x] **3. Kitchen display (KDS)** — live ticket queue, start/ready/served,
       auto-refresh every 5s (polling). WebSocket push is the later upgrade.
 - [x] **4. Owner home** — role-routed landing: open orders, occupied tables.
@@ -45,6 +83,127 @@ talks to the `/api/` that's already built, using token login for access per role
 
 **Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
 starter menu, links the superuser as owner, and adds cashier/kitchen logins.
+
+## Operating modes + real-cafe essentials (NEAR-TERM — takes it from "demo" to "runs a full day")
+
+The POS must fit these kinds of place from ONE codebase, chosen per tenant.
+HYBRID is the common case for small cafes — a few tables AND a takeaway counter
+at the same time — so it's a first-class mode, not an edge case:
+
+  A. **Dine-in / table service** (seats only) — table grid, per-table orders,
+     split by table.
+  B. **Takeaway-only / small cafe** (no seats) — walk up, order vada / samosa /
+     coffee, pay, leave. No table grid; a fast counter flow.
+  C. **Hybrid / both** (THE COMMON CASE) — a few tables AND a counter together:
+     someone eats in while the next person grabs a coffee to go. This is
+     basically what the cashier screen does TODAY (table grid + "Counter /
+     Takeaway" button side by side).
+
+- [ ] **Per-tenant service mode** (`service_mode`: dine_in / takeaway / both).
+      The cashier screen adapts:
+      - dine_in  -> table grid, no counter button
+      - takeaway -> counter order only, table grid hidden, opens straight to a
+                    new counter order -> bill -> pay -> done
+      - both     -> table grid AND counter button together (current behaviour)
+      Default = both (hybrid), since that's what most small cafes want. Pure
+      takeaway is just this with tables hidden.
+      - DATA MODEL: treat "Counter / Takeaway" as a permanent VIRTUAL TABLE
+        (is_virtual=True / id 0) so ONE code path serves both — a counter order
+        is just an order on the virtual table. Keeps dine-in and takeaway uniform.
+
+- [ ] **Customer bill: WhatsApp + UPI QR first, then thermal print (PULLED UP).**
+      A cafe can't run a day without a clean way to take UPI. Lead with:
+      - **Digital bill on WhatsApp** with a **UPI deep-link QR** — the Trojan
+        horse: it settles the bill AND captures the customer's phone for CRM in
+        one move, and saves thermal-paper cost.
+      - **Thermal receipt / KOT print** for kitchens that need paper — via Web
+        Bluetooth / WebUSB from the PWA. Note: printing to a 2-inch thermal
+        printer from a browser has real formatting quirks; budget time for it.
+      Online/mobile *card* payment is LATER (point 3). First is: "here's your
+      total — pay by UPI (QR on WhatsApp) or cash at the counter."
+
+- [ ] **Offline — Phase 1 (PULLED FORWARD).** Cache menu + tables in IndexedDB so
+      the cashier screen still loads and an order can be BUILT when wifi drops
+      mid-rush; queue pending order-writes locally. Phase 2 (later) = full sync +
+      duplicate/conflict handling on reconnect. Without this, a network blip in
+      the morning rush sends staff back to pen + paper and they abandon the app.
+
+- [ ] **KOT (kitchen order ticket) print** — print/send the order to the kitchen
+      (matters for dine-in and busier takeaway counters).
+
+- [ ] **Void / cancel + discount** — cancel an order or a single line, and apply
+      a discount (flat or %). A real till needs these.
+
+- [ ] **Day-close / sales report** — end-of-day totals: cash vs UPI vs card,
+      order count, total sales — so the owner reconciles the till each night.
+
+- [ ] **(Point 3, LATER) Online / mobile payment** — pay-from-phone (UPI intent
+      / payment gateway) so the customer settles without cash at the counter.
+
+- [ ] **(LATER) Online ordering + item-receipt verification (signsimple-style).**
+      When orders come in online (delivery / pickup / counter collection), add a
+      verification step — like signsimple's confirm flow — so both sides confirm
+      EVERY item was handed over / received. Cuts "missing item" disputes. Reuse
+      signsimple's verify pattern; ties into the receipt (#3) + customer record.
+
+## Competitive feature landscape — what established POS have that we don't (researched 2026)
+
+From Toast / Square / Lightspeed (global) and Petpooja / Reelo / Punchh / uEngage
+(India). NOT a list to fully clone — Petpooja has 100k+ outlets and 100+ reports;
+matching them feature-for-feature is a losing race. Split into table-stakes
+(needed to replace a real till) and differentiators (where a nimble AI-native,
+WhatsApp-first, commission-free POS can actually win).
+
+### A. Core operations — table stakes (needed before a real cafe relies on it)
+- [ ] **Inventory + recipe management** — stock auto-deducts per sale, low-stock
+      alerts, recipe/food costing, wastage tracking. (Petpooja's core strength.)
+- [ ] **Modifiers / variations / add-ons / combos** — "extra cheese", sizes,
+      meal combos. (We only have full/half today.)
+- [ ] **Aggregator sync (Swiggy / Zomato)** — manage online orders from one
+      screen (via middleware like UrbanPiper/Dyno; don't block launch on it).
+- [ ] **Station-wise KOT routing** — different kitchen stations -> their own printers.
+- [ ] **Offline mode** — keep billing + KOT working when the wifi drops (critical).
+- [ ] **Reservations / waitlist**, **token/queue management** (QSR takeaway).
+- [ ] **Gift cards / vouchers**, **multi-language** bills & UI (15+ Indian langs).
+- [ ] **Multi-outlet / franchise** — one owner, many outlets, consolidated view.
+
+### B. Data & insights (you asked) — mostly table stakes
+- [ ] **Day-end / Z-report**, **weekly & monthly sales**, **hourly trends**.
+- [ ] **Item-wise performance** (best/worst sellers = menu engineering).
+- [ ] **Payment-mode split** (cash/UPI/card), **cancelled/void report**.
+- [ ] **GST reports** ready for filing. **Staff/biller performance**.
+- [ ] Owner dashboard: live + historical, downloadable. (Forecasting later.)
+
+### C. CRM + loyalty + coupons (you asked) — THE WEDGE / differentiator
+- [ ] **Customer database** — capture phone at billing, order history per customer.
+- [ ] **Loyalty** — points / visit / spend based; tiers (silver/gold/platinum);
+      redemption at billing.
+- [ ] **Coupons / schemes / discounts** — codes, flat/%, validity, item/category.
+- [ ] **Birthday / anniversary** auto-offers; **feedback capture** (post-meal
+      rating, alert manager on 1-2 star).
+- [ ] **Win-back campaigns** — lapsed list (30/60/90 days) -> personalised offer
+      referencing their last order.
+- [ ] **WhatsApp-first messaging** — digital bill + UPI QR, offers, win-back.
+      WhatsApp ~98% open rate; THE India channel in 2026. Also the way to move
+      repeat orders OFF Swiggy/Zomato and escape 25-30% commission.
+- [ ] **Prepaid wallets / memberships / referrals** (newer trend: value > discount).
+
+### D. AI (you asked) — plays to our care-ai strengths, ties to voice ordering
+- [ ] **AI personalization** — purchase history -> targeted offer ("likes spicy,
+      visits Tuesdays -> free spicy item Tuesday"); lifts redemption vs blast.
+- [ ] **AI churn prediction** — flag who's about to stop coming, auto re-engage.
+- [ ] **AI marketing automation** — system finds inactive customers + revenue
+      gaps daily, suggests a ready WhatsApp campaign, owner approves in one tap.
+- [ ] **AI invoice digitisation** — scan supplier bill -> inventory + payables.
+- [ ] **AI phone / voice agent** — take orders 24/7 (reuse care-ai STT->LLM->JSON
+      pipeline). Ties directly to the existing voice-ordering idea below.
+- [ ] **AI menu/sales insights** — what to promote, menu engineering suggestions.
+
+**Strategic note:** lead with B (insights) + C (CRM/loyalty/WhatsApp) + D (AI) as
+the DIFFERENTIATED wedge — they grow the restaurant's revenue, break aggregator
+dependence, and fit our AI/voice strengths and "friend to the restaurant, flat
+fee not commission" positioning. Do the A table-stakes (esp. inventory, modifiers,
+reports, offline, GST) as needed so we can actually replace the current till.
 
 ## Go-to-market: self-service onboarding (GATED: only AFTER POS is proven end-to-end on pos.guhya.co.in with Cafe Gopala)
 
@@ -78,9 +237,11 @@ it, not rebuilding.
       avyangah-infra (same pattern as guhya-pos). Note in avyangah-infra BACKLOG.
 
 ## Now / next (after frontend foundation)
-- [ ] **Menu onboarding** — owner drops a spreadsheet / photo of the menu /
-      speaks the items; an LLM normalises into MenuCategory + MenuItem
-      (veg/non-veg, half/full, GST). Removes the painful manual menu entry.
+- [x] **Menu onboarding** — MERGED into "2. Menu management" above (AI import
+      populates the same menu-manager / Review & Confirm screen). Kept here as a
+      pointer so the link isn't lost: owner drops a spreadsheet / photo / speaks
+      the items -> LLM normalises into MenuCategory + MenuItem (veg/non-veg,
+      half/full, GST).
 
 ## Soon
 - [ ] **White-label theming (per-customer UI).** Each tenant's website AND POS
