@@ -4,11 +4,49 @@ The POS core (multi-tenant data model + cashier API + blue/green deploy) is
 done and pushed. This is the backlog, roughly in priority order. Each item is
 staged so we ship something usable at every step rather than a big-bang.
 
-## Now / next
-- [ ] **Deploy to pos.guhya.co.in** and run `migrate` on the server (test box).
-- [ ] **Kitchen display (KDS)** over WebSockets — live order/line status push.
-      Redis is already in the compose file. Cashier "send to kitchen" -> screen
-      updates instantly; kitchen marks items ready -> flows back to the floor.
+## ✅ DONE
+- [x] **Backend** — multi-tenant data model + cashier API, tested.
+- [x] **Deployed to pos.guhya.co.in** — live behind shared nginx (avyangah box),
+      automated from laptop via `avyangah-infra/stacks/guhya-pos` (cert.sh + deploy.sh).
+      `/ping` 200, `/admin/` and `/api/` working. Image from ghcr, blue/green ready.
+
+## Frontend — the real app (THE PRIORITY NOW)
+
+Why: the root URL shows "Not Found" because only `/ping`, `/admin/`, `/api/`
+exist. Staff should use a proper app with role-based access THROUGH the app
+layer — NOT the Django admin. This is the React PWA we planned early on; it
+talks to the `/api/` that's already built, using token login for access per role.
+
+**Architecture (decided):**
+- React + Vite single-page app (PWA), token auth against `/api/auth/login/`.
+- Served by the EXISTING guhya-pos container (built into the image, Django serves
+  index.html at `/` + SPA catch-all; assets via WhiteNoise). No new container,
+  no nginx change, root URL works immediately. (Can split into a dedicated
+  frontend container later, like docsign, if/when needed — noted, not now.)
+- Token + role kept in memory/secure storage; every screen scoped by role
+  (owner / admin / cashier / kitchen / waiter).
+- Token-first theming from day one (CSS variables from a per-tenant branding
+  record) so the white-label work later is a config flip, not a rewrite.
+
+**Build order (each ships something usable):**
+- [x] **0. Foundation** — served SPA (React via CDN, no build step) at `/`:
+      API client, token auth, login, role-routed app shell. Django serves
+      `templates/index.html` + SPA catch-all. Root URL now shows a real login.
+- [x] **1. Cashier screen** — tables -> menu -> live GST bill -> split payment
+      (cash/UPI/card). Uses the existing order endpoints.
+- [ ] **2. Menu setup screen** — owner adds/edits categories + items.
+      NEEDS BACKEND FIRST: `MenuViewSet` is read-only; add create/update/delete
+      endpoints (+ category write) before the edit UI. (Menu currently shows
+      read-only in the cashier screen; seeded via `manage.py seed_cafe`.)
+- [x] **3. Kitchen display (KDS)** — live ticket queue, start/ready/served,
+      auto-refresh every 5s (polling). WebSocket push is the later upgrade.
+- [x] **4. Owner home** — role-routed landing: open orders, occupied tables.
+      (Richer dashboard — sales totals, top items — later.)
+
+**Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
+starter menu, links the superuser as owner, and adds cashier/kitchen logins.
+
+## Now / next (after frontend foundation)
 - [ ] **Menu onboarding** — owner drops a spreadsheet / photo of the menu /
       speaks the items; an LLM normalises into MenuCategory + MenuItem
       (veg/non-veg, half/full, GST). Removes the painful manual menu entry.

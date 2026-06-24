@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Guhya POS</title>
+  <style>
+    /* ---- Theme tokens (per-tenant branding will override these later) ---- */
+    :root {
+      --brand:        #b5471f;   /* primary / brand */
+      --brand-dark:   #8f3414;
+      --accent:       #1f7a5a;
+      --bg:           #f5f1ea;
+      --surface:      #ffffff;
+      --ink:          #2a2320;
+      --ink-soft:     #6b625b;
+      --line:         #e6ded3;
+      --ok:           #1f7a5a;
+      --warn:         #c9851a;
+      --danger:       #c0392b;
+      --veg:          #2e7d32;
+      --nonveg:       #c0392b;
+      --egg:          #c9851a;
+      --radius:       12px;
+      --shadow:       0 1px 3px rgba(0,0,0,.08), 0 4px 14px rgba(0,0,0,.05);
+      --font:         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; margin: 0; }
+    body { font-family: var(--font); background: var(--bg); color: var(--ink); font-size: 15px; }
+    button { font-family: inherit; cursor: pointer; }
+    input, select { font-family: inherit; font-size: 16px; }
+
+    .btn { border: none; border-radius: 10px; padding: 11px 16px; font-weight: 600; font-size: 15px;
+           background: var(--brand); color: #fff; transition: filter .12s; }
+    .btn:hover { filter: brightness(1.05); }
+    .btn:active { filter: brightness(.94); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    .btn.accent { background: var(--accent); }
+    .btn.danger { background: var(--danger); }
+    .btn.sm { padding: 7px 11px; font-size: 13px; border-radius: 8px; }
+
+    /* ---- Login ---- */
+    .login-wrap { height: 100%; display: grid; place-items: center; padding: 20px; }
+    .login-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+                  width: 100%; max-width: 360px; padding: 32px 28px; }
+    .login-card h1 { margin: 0 0 4px; font-size: 22px; color: var(--brand); }
+    .login-card p  { margin: 0 0 24px; color: var(--ink-soft); font-size: 14px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 5px; }
+    .field input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; }
+    .field input:focus { outline: none; border-color: var(--brand); }
+    .err { background: #fdecea; color: var(--danger); padding: 9px 12px; border-radius: 8px;
+           font-size: 13px; margin-bottom: 14px; }
+
+    /* ---- Shell ---- */
+    .shell { height: 100%; display: flex; flex-direction: column; }
+    .topbar { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--surface);
+              border-bottom: 1px solid var(--line); }
+    .topbar .brand { font-weight: 800; color: var(--brand); font-size: 17px; }
+    .topbar .tenant { color: var(--ink-soft); font-size: 13px; }
+    .topbar .spacer { flex: 1; }
+    .nav { display: flex; gap: 4px; }
+    .nav button { background: transparent; border: none; padding: 8px 13px; border-radius: 8px;
+                  font-weight: 600; color: var(--ink-soft); font-size: 14px; }
+    .nav button.active { background: var(--brand); color: #fff; }
+    .who { font-size: 13px; color: var(--ink-soft); text-align: right; line-height: 1.3; }
+    .who b { color: var(--ink); display: block; text-transform: capitalize; }
+
+    .main { flex: 1; overflow: hidden; }
+
+    /* ---- Cashier 3-pane ---- */
+    .cashier { height: 100%; display: grid; grid-template-columns: 200px 1fr 320px; }
+    .pane { overflow-y: auto; padding: 14px; }
+    .pane.tables { border-right: 1px solid var(--line); background: #faf7f1; }
+    .pane.menu   { border-right: 1px solid var(--line); }
+    .pane.bill   { background: var(--surface); display: flex; flex-direction: column; padding: 0; }
+    .pane h3 { margin: 2px 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); }
+
+    .table-btn { width: 100%; text-align: left; margin-bottom: 7px; padding: 11px 12px; border-radius: 10px;
+                 border: 1px solid var(--line); background: var(--surface); font-weight: 600; }
+    .table-btn .seats { font-weight: 400; color: var(--ink-soft); font-size: 12px; }
+    .table-btn.occupied { border-color: var(--warn); background: #fff7e8; }
+    .table-btn.sel { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(181,71,31,.18); }
+
+    .cat { margin-bottom: 18px; }
+    .cat h4 { margin: 0 0 9px; font-size: 14px; color: var(--brand-dark); }
+    .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--surface);
+            display: flex; flex-direction: column; gap: 7px; }
+    .item .nm { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+    .dot { width: 9px; height: 9px; border-radius: 2px; flex: none; border: 1.5px solid; }
+    .dot.veg { border-color: var(--veg); background: var(--veg); }
+    .dot.nonveg { border-color: var(--nonveg); background: var(--nonveg); }
+    .dot.egg { border-color: var(--egg); background: var(--egg); }
+    .item .add-row { display: flex; gap: 6px; }
+    .item .price { color: var(--ink-soft); font-size: 13px; margin-top: -2px; }
+
+    .bill-head { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .bill-head .t { font-weight: 700; font-size: 16px; }
+    .bill-head .s { color: var(--ink-soft); font-size: 13px; }
+    .lines { flex: 1; overflow-y: auto; padding: 8px 16px; }
+    .empty { color: var(--ink-soft); text-align: center; padding: 40px 10px; font-size: 14px; }
+    .line { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+    .line .ln { flex: 1; }
+    .line .ln .nm { font-weight: 600; font-size: 14px; }
+    .line .ln .meta { color: var(--ink-soft); font-size: 12px; }
+    .qty { display: flex; align-items: center; gap: 6px; }
+    .qty button { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--surface); font-weight: 700; font-size: 15px; line-height: 1; }
+    .qty span { min-width: 18px; text-align: center; font-weight: 600; }
+    .line .lt { min-width: 64px; text-align: right; font-weight: 600; font-size: 14px; }
+    .bill-foot { border-top: 1px solid var(--line); padding: 14px 16px; }
+    .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+    .row.total { font-size: 19px; font-weight: 800; margin: 8px 0 2px; }
+    .row .muted { color: var(--ink-soft); }
+
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: grid; place-items: center; z-index: 50; padding: 16px; }
+    .modal { background: var(--surface); border-radius: var(--radius); padding: 22px; width: 100%; max-width: 360px; box-shadow: var(--shadow); }
+    .modal h3 { margin: 0 0 14px; }
+    .pay-methods { display: flex; gap: 8px; margin-bottom: 14px; }
+    .pay-methods button { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+                          background: var(--surface); font-weight: 600; text-transform: capitalize; }
+    .pay-methods button.sel { border-color: var(--brand); background: #fdeee8; color: var(--brand-dark); }
+
+    /* ---- Kitchen ---- */
+    .kds { height: 100%; overflow-y: auto; padding: 16px; }
+    .kds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+    .ticket { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+              border-top: 4px solid var(--brand); }
+    .ticket.preparing { border-top-color: var(--warn); }
+    .ticket.ready { border-top-color: var(--ok); }
+    .ticket .th { padding: 11px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+    .ticket .th b { font-size: 15px; }
+    .ticket .th .age { font-size: 12px; color: var(--ink-soft); }
+    .ticket .tl { padding: 10px 14px; }
+    .ticket .tl .li { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
+    .ticket .tl .li .q { font-weight: 700; color: var(--brand-dark); }
+    .ticket .ta { display: flex; gap: 7px; padding: 0 14px 13px; }
+    .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
+    .badge.new { background: #fdeee8; color: var(--brand-dark); }
+    .badge.preparing { background: #fff3df; color: var(--warn); }
+    .badge.ready { background: #e3f3ec; color: var(--ok); }
+
+    .center-msg { height: 100%; display: grid; place-items: center; color: var(--ink-soft); }
+
+    @media (max-width: 820px) {
+      .cashier { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+      .pane.tables { display: flex; gap: 7px; overflow-x: auto; }
+      .pane.tables h3 { display: none; }
+      .table-btn { min-width: 120px; margin: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script type="module">
+    import htm from 'https://unpkg.com/htm?module';
+    const html = htm.bind(React.createElement);
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ---------------- auth + api ----------------
+    const KEY = 'guhya.auth';
+    const loadAuth = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } };
+    const saveAuth = (a) => localStorage.setItem(KEY, JSON.stringify(a));
+    const clearAuth = () => localStorage.removeItem(KEY);
+
+    async function api(path, { method = 'GET', body } = {}) {
+      const auth = loadAuth();
+      const headers = { 'Content-Type': 'application/json' };
+      if (auth?.token) headers['Authorization'] = 'Token ' + auth.token;
+      const res = await fetch('/api' + path, {
+        method, headers, body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status === 401) { clearAuth(); location.reload(); return; }
+      const data = res.status === 204 ? null : await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || ('Request failed (' + res.status + ')'));
+      return data;
+    }
+
+    const rupee = (n) => '₹' + Number(n || 0).toFixed(2);
+    const FOOD = { veg: 'veg', nonveg: 'nonveg', egg: 'egg' };
+
+    // ---------------- Login ----------------
+    function Login({ onLogin }) {
+      const [u, setU] = useState(''); const [p, setP] = useState('');
+      const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+      const submit = async () => {
+        setErr(''); setBusy(true);
+        try {
+          const data = await api('/auth/login/', { method: 'POST', body: { username: u, password: p } });
+          saveAuth(data); onLogin(data);
+        } catch (e) { setErr(e.message); } finally { setBusy(false); }
+      };
+      return html`
+        <div class="login-wrap">
+          <div class="login-card">
+            <h1>Guhya POS</h1>
+            <p>Sign in to your restaurant</p>
+            ${err && html`<div class="err">${err}</div>`}
+            <div class="field"><label>Username</label>
+              <input value=${u} onChange=${e => setU(e.target.value)}
+                     onKeyDown=${e => e.key === 'Enter' && submit()} autoFocus /></div>
+            <div class="field"><label>Password</label>
+              <input type="password" value=${p} onChange=${e => setP(e.target.value)}
+                     onKeyDown=${e => e.key === 'Enter' && submit()} /></div>
+            <button class="btn" style=${{ width: '100%', marginTop: '6px' }}
+                    disabled=${busy || !u || !p} onClick=${submit}>
+              ${busy ? 'Signing in…' : 'Sign in'}</button>
+          </div>
+        </div>`;
+    }
+
+    // ---------------- Cashier ----------------
+    function Cashier() {
+      const [tables, setTables] = useState([]);
+      const [menu, setMenu] = useState([]);
+      const [order, setOrder] = useState(null);
+      const [selTable, setSelTable] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [pay, setPay] = useState(false);
+
+      const loadBase = useCallback(async () => {
+        const [t, m] = await Promise.all([api('/tables/'), api('/menu/')]);
+        setTables(t || []); setMenu(m || []);
+      }, []);
+      useEffect(() => { loadBase(); }, [loadBase]);
+
+      const openTable = async (table) => {
+        setBusy(true); setSelTable(table?.id ?? 'counter');
+        try {
+          const active = await api('/orders/?status=active');
+          let o = (active || []).find(x => table ? x.table === table.id : (!x.table));
+          if (!o) o = await api('/orders/', { method: 'POST', body: { source: 'dine_in', table_id: table?.id } });
+          setOrder(o);
+        } catch (e) { alert(e.message); } finally { setBusy(false); }
+      };
+
+      const refresh = async (id) => { const o = await api('/orders/' + id + '/'); setOrder(o); };
+      const addItem = async (item, is_half) => {
+        if (!order) { alert('Pick a table first'); return; }
+        const o = await api('/orders/' + order.id + '/add_line/', { method: 'POST', body: { item_id: item.id, qty: 1, is_half } });
+        setOrder(o);
+      };
+      const changeQty = async (line, delta) => {
+        const o = await api('/orders/' + order.id + '/update_line/', { method: 'POST', body: { line_id: line.id, qty: line.qty + delta } });
+        setOrder(o);
+      };
+      const closeAfterPay = async () => { setPay(false); setOrder(null); setSelTable(null); await loadBase(); };
+
+      return html`
+        <div class="cashier">
+          <div class="pane tables">
+            <h3>Tables</h3>
+            <button class=${'table-btn ' + (selTable === 'counter' ? 'sel' : '')} onClick=${() => openTable(null)}>
+              Counter / Takeaway</button>
+            ${tables.map(t => html`
+              <button key=${t.id} class=${'table-btn ' + (t.status === 'occupied' ? 'occupied ' : '') + (selTable === t.id ? 'sel' : '')}
+                      onClick=${() => openTable(t)}>
+                ${t.name}<div class="seats">${t.seats} seats · ${t.status}</div></button>`)}
+          </div>
+
+          <div class="pane menu">
+            <h3>Menu</h3>
+            ${menu.length === 0 && html`<div class="empty">No menu items yet. Add them from Menu / admin.</div>`}
+            ${menu.map(cat => html`
+              <div class="cat" key=${cat.id}>
+                <h4>${cat.name}</h4>
+                <div class="items">
+                  ${cat.items.map(it => html`
+                    <div class="item" key=${it.id}>
+                      <div class="nm"><span class=${'dot ' + (FOOD[it.food_type] || '')}></span>${it.name}</div>
+                      <div class="price">${rupee(it.price)}${it.half_price ? ' · half ' + rupee(it.half_price) : ''}</div>
+                      <div class="add-row">
+                        <button class="btn sm" style=${{ flex: 1 }} onClick=${() => addItem(it, false)}>Add</button>
+                        ${Number(it.half_price) > 0 && html`
+                          <button class="btn sm ghost" onClick=${() => addItem(it, true)}>½</button>`}
+                      </div>
+                    </div>`)}
+                </div>
+              </div>`)}
+          </div>
+
+          <div class="pane bill">
+            <div class="bill-head">
+              <div class="t">${order ? (order.table_name || 'Counter / Takeaway') : 'No order'}</div>
+              <div class="s">${order ? ('Order #' + order.id + ' · ' + order.status) : 'Select a table to start'}</div>
+            </div>
+            <div class="lines">
+              ${!order && html`<div class="empty">Pick a table or Counter to begin.</div>`}
+              ${order && order.lines.length === 0 && html`<div class="empty">Tap menu items to add them.</div>`}
+              ${order && order.lines.map(l => html`
+                <div class="line" key=${l.id}>
+                  <div class="ln">
+                    <div class="nm">${l.name_snapshot}${l.is_half ? ' (½)' : ''}</div>
+                    <div class="meta">${rupee(l.unit_price)} · GST ${l.gst_rate}%</div>
+                  </div>
+                  <div class="qty">
+                    <button onClick=${() => changeQty(l, -1)}>−</button>
+                    <span>${l.qty}</span>
+                    <button onClick=${() => changeQty(l, +1)}>+</button>
+                  </div>
+                  <div class="lt">${rupee(l.line_total)}</div>
+                </div>`)}
+            </div>
+            ${order && html`
+              <div class="bill-foot">
+                <div class="row"><span class="muted">Subtotal</span><span>${rupee(order.subtotal)}</span></div>
+                <div class="row"><span class="muted">GST</span><span>${rupee(order.tax_total)}</span></div>
+                <div class="row total"><span>Total</span><span>${rupee(order.total)}</span></div>
+                ${Number(order.amount_paid) > 0 && html`
+                  <div class="row"><span class="muted">Paid</span><span>${rupee(order.amount_paid)}</span></div>
+                  <div class="row"><span class="muted">Balance</span><span>${rupee(order.balance)}</span></div>`}
+                <button class="btn accent" style=${{ width: '100%', marginTop: '10px' }}
+                        disabled=${order.lines.length === 0} onClick=${() => setPay(true)}>
+                  Take payment · ${rupee(order.balance)}</button>
+              </div>`}
+          </div>
+
+          ${pay && html`<${PayModal} order=${order} onClose=${() => setPay(false)}
+                          onPaid=${async (o) => { if (o.status === 'paid') { await closeAfterPay(); } else { setOrder(o); } }} />`}
+        </div>`;
+    }
+
+    function PayModal({ order, onClose, onPaid }) {
+      const [method, setMethod] = useState('cash');
+      const [amount, setAmount] = useState(Number(order.balance).toFixed(2));
+      const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+      const submit = async () => {
+        setErr(''); setBusy(true);
+        try {
+          const o = await api('/orders/' + order.id + '/pay/', { method: 'POST', body: { method, amount } });
+          onPaid(o);
+        } catch (e) { setErr(e.message); setBusy(false); }
+      };
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()}>
+            <h3>Payment · ${rupee(order.balance)} due</h3>
+            ${err && html`<div class="err">${err}</div>`}
+            <div class="pay-methods">
+              ${['cash', 'upi', 'card'].map(m => html`
+                <button key=${m} class=${method === m ? 'sel' : ''} onClick=${() => setMethod(m)}>${m}</button>`)}
+            </div>
+            <div class="field"><label>Amount (partial allowed for split)</label>
+              <input value=${amount} onChange=${e => setAmount(e.target.value)} /></div>
+            <div style=${{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+              <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
+              <button class="btn accent" style=${{ flex: 2 }} disabled=${busy} onClick=${submit}>
+                ${busy ? 'Saving…' : 'Confirm payment'}</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // ---------------- Kitchen ----------------
+    function Kitchen() {
+      const [orders, setOrders] = useState([]);
+      const load = useCallback(async () => { try { setOrders(await api('/orders/kitchen/') || []); } catch {} }, []);
+      useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+      const setStatus = async (o, status) => { await api('/orders/' + o.id + '/set_status/', { method: 'POST', body: { status } }); load(); };
+      const mins = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+      return html`
+        <div class="kds">
+          ${orders.length === 0 && html`<div class="center-msg">No active kitchen orders.</div>`}
+          <div class="kds-grid">
+            ${orders.map(o => html`
+              <div class=${'ticket ' + o.status} key=${o.id}>
+                <div class="th">
+                  <b>${o.table_name || 'Takeaway'}</b>
+                  <span class=${'badge ' + o.status}>${o.status}</span>
+                </div>
+                <div class="tl">
+                  ${o.lines.map(l => html`
+                    <div class="li" key=${l.id}><span><span class="q">${l.qty}×</span> ${l.name_snapshot}${l.is_half ? ' (½)' : ''}</span></div>`)}
+                  <div class="th" style=${{ border: 'none', padding: '6px 0 0' }}><span class="age">#${o.id} · ${mins(o.created_at)} min ago</span></div>
+                </div>
+                <div class="ta">
+                  ${o.status === 'new' && html`<button class="btn sm" style=${{ flex: 1 }} onClick=${() => setStatus(o, 'preparing')}>Start</button>`}
+                  ${o.status === 'preparing' && html`<button class="btn sm accent" style=${{ flex: 1 }} onClick=${() => setStatus(o, 'ready')}>Ready</button>`}
+                  ${o.status === 'ready' && html`<button class="btn sm ghost" style=${{ flex: 1 }} onClick=${() => setStatus(o, 'delivered')}>Served</button>`}
+                </div>
+              </div>`)}
+          </div>
+        </div>`;
+    }
+
+    // ---------------- Owner home ----------------
+    function Home({ auth }) {
+      const [stats, setStats] = useState(null);
+      useEffect(() => { (async () => {
+        try {
+          const [active, tables] = await Promise.all([api('/orders/?status=active'), api('/tables/')]);
+          const occ = (tables || []).filter(t => t.status === 'occupied').length;
+          setStats({ open: (active || []).length, occ, tables: (tables || []).length });
+        } catch {}
+      })(); }, []);
+      return html`
+        <div style=${{ padding: '24px', maxWidth: '720px' }}>
+          <h2 style=${{ marginTop: 0 }}>Welcome${auth.tenant ? ', ' + auth.tenant.name : ''}</h2>
+          <p style=${{ color: 'var(--ink-soft)' }}>Signed in as <b style=${{ textTransform: 'capitalize' }}>${auth.role}</b> (${auth.username}).</p>
+          ${stats && html`
+            <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px', marginTop: '16px' }}>
+              ${[['Open orders', stats.open], ['Occupied tables', stats.occ + ' / ' + stats.tables], ['Tables', stats.tables]].map(([k, v]) => html`
+                <div key=${k} style=${{ background: 'var(--surface)', borderRadius: 'var(--radius)', padding: '18px', boxShadow: 'var(--shadow)' }}>
+                  <div style=${{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)' }}>${v}</div>
+                  <div style=${{ color: 'var(--ink-soft)', fontSize: '13px' }}>${k}</div>
+                </div>`)}
+            </div>`}
+        </div>`;
+    }
+
+    // ---------------- Shell + routing ----------------
+    const TABS = {
+      cashier: { label: 'Cashier', comp: Cashier, roles: ['owner', 'admin', 'cashier', 'waiter'] },
+      kitchen: { label: 'Kitchen', comp: Kitchen, roles: ['owner', 'admin', 'kitchen'] },
+      home:    { label: 'Home',    comp: Home,    roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
+    };
+
+    function App() {
+      const [auth, setAuth] = useState(loadAuth());
+      const allowed = auth ? Object.entries(TABS).filter(([, t]) => t.roles.includes(auth.role)).map(([k]) => k) : [];
+      const first = auth ? (auth.role === 'kitchen' ? 'kitchen' : 'cashier') : null;
+      const [tab, setTab] = useState(first);
+
+      useEffect(() => { if (auth && !allowed.includes(tab)) setTab(first); }, [auth]);
+
+      if (!auth) return html`<${Login} onLogin=${(a) => { setAuth(a); setTab(a.role === 'kitchen' ? 'kitchen' : 'cashier'); }} />`;
+
+      const Active = (TABS[tab] || TABS[first]).comp;
+      return html`
+        <div class="shell">
+          <div class="topbar">
+            <span class="brand">Guhya POS</span>
+            ${auth.tenant && html`<span class="tenant">${auth.tenant.name}</span>`}
+            <div class="spacer"></div>
+            <div class="nav">
+              ${allowed.map(k => html`<button key=${k} class=${tab === k ? 'active' : ''} onClick=${() => setTab(k)}>${TABS[k].label}</button>`)}
+            </div>
+            <div class="who"><b>${auth.role}</b>${auth.username}</div>
+            <button class="btn ghost sm" onClick=${() => { clearAuth(); setAuth(null); }}>Logout</button>
+          </div>
+          <div class="main"><${Active} auth=${auth} /></div>
+        </div>`;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+  </script>
+</body>
+</html>
