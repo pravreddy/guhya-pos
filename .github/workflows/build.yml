@@ -1,7 +1,9 @@
-name: build-and-push
+name: build-and-deploy
 
-# Builds the guhya-pos API image and pushes it to GitHub Container Registry,
-# exactly like careai-api / docsign-api. The server then just PULLS this image.
+# Builds the guhya-pos image, pushes to GHCR, then deploys to the shared
+# Hetzner box over SSH — same pattern as care-ai's pipeline.
+#   build  -> push ghcr.io/pravreddy/guhya-pos-api:latest
+#   deploy -> SSH in, pull, restart container (migrations run on startup), health-check
 on:
   push:
     branches: [main]
@@ -30,3 +32,44 @@ jobs:
           tags: |
             ghcr.io/pravreddy/guhya-pos-api:latest
             ghcr.io/pravreddy/guhya-pos-api:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.UK_SERVER_IP }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /home/deploy/careai
+
+            # durable read:packages token so the server's login stays valid
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            DC="docker compose -f docker-compose.yml -f docker-compose.guhya.yml"
+
+            echo "🚀 pulling + starting guhya-pos-api-blue"
+            $DC pull guhya-pos-api-blue
+            $DC up -d guhya-pos-api-blue   # recreates with new image; runs migrate on startup
+
+            echo "🏥 health check /ping"
+            ok=0
+            for i in $(seq 1 30); do
+              if docker exec guhya-pos-api-blue \
+                   curl -sf -H 'Host: pos.guhya.co.in' http://localhost:8000/ping >/dev/null 2>&1; then
+                ok=1; echo "   healthy"; break
+              fi
+              sleep 3
+            done
+            if [ "$ok" != 1 ]; then
+              echo "❌ health check failed — recent logs:"
+              docker logs guhya-pos-api-blue --tail 50
+              exit 1
+            fi
+
+            docker image prune -f
+            echo "🎉 guhya-pos deployed"
