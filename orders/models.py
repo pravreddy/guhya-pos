@@ -24,6 +24,12 @@ class Order(TenantAwareModel):
         ONLINE = "online", "Online"
         AGGREGATOR = "aggregator", "Aggregator"
 
+    class ServiceMode(models.TextChoices):
+        # How the order is fulfilled in-house. A takeaway order has no table and
+        # several can run at once; one code path serves both (table-less order).
+        DINE_IN = "dine_in", "Dine-in"
+        TAKEAWAY = "takeaway", "Takeaway"
+
     class Status(models.TextChoices):
         NEW = "new", "New"
         PREPARING = "preparing", "Preparing"
@@ -35,6 +41,11 @@ class Order(TenantAwareModel):
     table = models.ForeignKey(Table, null=True, blank=True,
                               on_delete=models.SET_NULL, related_name="orders")
     source = models.CharField(max_length=12, choices=Source.choices, default=Source.DINE_IN)
+    service_mode = models.CharField(max_length=10, choices=ServiceMode.choices,
+                                    default=ServiceMode.DINE_IN)
+    # pickup token for takeaway (optional; cashier generates it at payment).
+    # Numbered per restaurant, per day, starting at 1.
+    token = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.NEW)
     # for aggregator orders (Zomato/Swiggy), filled when synced or entered:
     aggregator_name = models.CharField(max_length=40, blank=True)

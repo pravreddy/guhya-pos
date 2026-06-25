@@ -251,40 +251,67 @@
     function Cashier() {
       const [tables, setTables] = useState([]);
       const [menu, setMenu] = useState([]);
-      const [order, setOrder] = useState(null);
-      const [selTable, setSelTable] = useState(null);
-      const [busy, setBusy] = useState(false);
+      const [active, setActive] = useState([]);       // active orders (occupancy + takeaway list)
+      const [order, setOrder] = useState(null);       // open order (created) or null
+      const [selKind, setSelKind] = useState(null);   // 'table' | 'takeaway' | null
+      const [selTable, setSelTable] = useState(null); // table object when selKind==='table'
       const [pay, setPay] = useState(false);
+      const [payResult, setPayResult] = useState(null);
       const [q, setQ] = useState('');
       const [activeCat, setActiveCat] = useState('all');
 
       const loadBase = useCallback(async () => {
-        const [t, m] = await Promise.all([api('/tables/'), api('/menu/')]);
-        setTables(t || []); setMenu(m || []);
+        const [t, m, a] = await Promise.all([api('/tables/'), api('/menu/'), api('/orders/?status=active')]);
+        setTables(t || []); setMenu(m || []); setActive(a || []);
       }, []);
       useEffect(() => { loadBase(); }, [loadBase]);
+      const refreshActive = async () => { try { setActive(await api('/orders/?status=active') || []); } catch {} };
 
-      const openTable = async (table) => {
-        setBusy(true); setSelTable(table?.id ?? 'counter');
-        try {
-          const active = await api('/orders/?status=active');
-          let o = (active || []).find(x => table ? x.table === table.id : (!x.table));
-          if (!o) o = await api('/orders/', { method: 'POST', body: { source: 'dine_in', table_id: table?.id } });
-          setOrder(o);
-        } catch (e) { alert(e.message); } finally { setBusy(false); }
+      const takeaways = active.filter(o => o.service_mode === 'takeaway');
+      const orderForTable = (id) => active.find(o => o.table === id) || null;
+
+      const selectTable = (table) => {
+        setSelKind('table'); setSelTable(table);
+        setOrder(orderForTable(table.id));   // resume existing, or null -> lazy create on first item
+      };
+      const newTakeaway = () => { setSelKind('takeaway'); setSelTable(null); setOrder(null); };
+      const resumeTakeaway = (o) => { setSelKind('takeaway'); setSelTable(null); setOrder(o); };
+
+      const ensureOrder = async () => {
+        if (order) return order;
+        const body = selKind === 'takeaway'
+          ? { service_mode: 'takeaway' }
+          : { service_mode: 'dine_in', table_id: selTable && selTable.id };
+        const o = await api('/orders/', { method: 'POST', body });
+        setOrder(o); return o;
       };
 
-      const refresh = async (id) => { const o = await api('/orders/' + id + '/'); setOrder(o); };
       const addItem = async (item, is_half) => {
-        if (!order) { alert('Pick a table first'); return; }
-        const o = await api('/orders/' + order.id + '/add_line/', { method: 'POST', body: { item_id: item.id, qty: 1, is_half } });
-        setOrder(o);
+        if (!selKind) { alert('Pick a table or start a takeaway first'); return; }
+        try {
+          const base = await ensureOrder();
+          const o = await api('/orders/' + base.id + '/add_line/', { method: 'POST', body: { item_id: item.id, qty: 1, is_half } });
+          setOrder(o); refreshActive();
+        } catch (e) { alert(e.message); }
       };
       const changeQty = async (line, delta) => {
         const o = await api('/orders/' + order.id + '/update_line/', { method: 'POST', body: { line_id: line.id, qty: line.qty + delta } });
-        setOrder(o);
+        setOrder(o); refreshActive();
       };
-      const closeAfterPay = async () => { setPay(false); setOrder(null); setSelTable(null); await loadBase(); };
+      const clearSel = () => { setSelKind(null); setSelTable(null); setOrder(null); };
+      const onPaid = async (o) => {
+        if (o.status === 'paid') {
+          setPay(false);
+          setPayResult({ total: o.total, token: o.token, takeaway: o.service_mode === 'takeaway', table: o.table_name });
+          clearSel(); await loadBase();
+        } else { setOrder(o); }
+      };
+
+      const billTitle = selKind === 'table' ? (selTable ? selTable.name : 'Table')
+        : selKind === 'takeaway' ? (order ? ('Takeaway #' + order.id + (order.token ? ' · Token ' + order.token : '')) : 'New takeaway')
+        : 'No order';
+      const billSub = order ? ('Order #' + order.id + ' · ' + order.status)
+        : selKind ? 'Add items to start' : 'Select a table or takeaway';
 
       const ql = q.trim().toLowerCase();
       const visibleMenu = menu
@@ -294,13 +321,23 @@
       return html`
         <div class="cashier">
           <div class="pane tables">
-            <h3>Tables</h3>
-            <button class=${'table-btn ' + (selTable === 'counter' ? 'sel' : '')} onClick=${() => openTable(null)}>
-              Counter / Takeaway</button>
-            ${tables.map(t => html`
-              <button key=${t.id} class=${'table-btn ' + (t.status === 'occupied' ? 'occupied ' : '') + (selTable === t.id ? 'sel' : '')}
-                      onClick=${() => openTable(t)}>
-                ${t.name}<div class="seats">${t.seats} seats · ${t.status}</div></button>`)}
+            <h3>Dine-in</h3>
+            ${tables.map(t => {
+              const occ = orderForTable(t.id);
+              const isSel = selKind === 'table' && selTable && selTable.id === t.id;
+              return html`
+                <button key=${t.id} class=${'table-btn ' + (occ ? 'occupied ' : '') + (isSel ? 'sel' : '')}
+                        onClick=${() => selectTable(t)}>
+                  ${t.name}<div class="seats">${t.seats} seats · ${occ ? 'occupied' : 'free'}</div></button>`;
+            })}
+            <h3 style=${{ marginTop: '16px' }}>Takeaway / Counter</h3>
+            <button class=${'table-btn ' + (selKind === 'takeaway' && !order ? 'sel' : '')} onClick=${newTakeaway}>
+              + New takeaway</button>
+            ${takeaways.map(o => html`
+              <button key=${o.id} class=${'table-btn occupied ' + (order && order.id === o.id ? 'sel' : '')}
+                      onClick=${() => resumeTakeaway(o)}>
+                ${o.token ? ('Token ' + o.token) : ('Takeaway #' + o.id)}
+                <div class="seats">${rupee(o.total)} · ${o.lines.length} item${o.lines.length === 1 ? '' : 's'}</div></button>`)}
           </div>
 
           <div class="pane menu">
@@ -333,11 +370,12 @@
 
           <div class="pane bill">
             <div class="bill-head">
-              <div class="t">${order ? (order.table_name || 'Counter / Takeaway') : 'No order'}</div>
-              <div class="s">${order ? ('Order #' + order.id + ' · ' + order.status) : 'Select a table to start'}</div>
+              <div class="t">${billTitle}</div>
+              <div class="s">${billSub}</div>
             </div>
             <div class="lines">
-              ${!order && html`<div class="empty">Pick a table or Counter to begin.</div>`}
+              ${!selKind && html`<div class="empty">Pick a table or start a takeaway to begin.</div>`}
+              ${selKind && !order && html`<div class="empty">Tap menu items to add them.</div>`}
               ${order && order.lines.length === 0 && html`<div class="empty">Tap menu items to add them.</div>`}
               ${order && order.lines.map(l => html`
                 <div class="line" key=${l.id}>
@@ -367,19 +405,21 @@
               </div>`}
           </div>
 
-          ${pay && html`<${PayModal} order=${order} onClose=${() => setPay(false)}
-                          onPaid=${async (o) => { if (o.status === 'paid') { await closeAfterPay(); } else { setOrder(o); } }} />`}
+          ${pay && html`<${PayModal} order=${order} onClose=${() => setPay(false)} onPaid=${onPaid} />`}
+          ${payResult && html`<${PostPayModal} result=${payResult} onClose=${() => setPayResult(null)} />`}
         </div>`;
     }
 
     function PayModal({ order, onClose, onPaid }) {
+      const isTakeaway = order.service_mode === 'takeaway';
       const [method, setMethod] = useState('cash');
       const [amount, setAmount] = useState(Number(order.balance).toFixed(2));
+      const [makeToken, setMakeToken] = useState(isTakeaway);
       const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
       const submit = async () => {
         setErr(''); setBusy(true);
         try {
-          const o = await api('/orders/' + order.id + '/pay/', { method: 'POST', body: { method, amount } });
+          const o = await api('/orders/' + order.id + '/pay/', { method: 'POST', body: { method, amount, make_token: makeToken } });
           onPaid(o);
         } catch (e) { setErr(e.message); setBusy(false); }
       };
@@ -394,11 +434,32 @@
             </div>
             <div class="field"><label>Amount (partial allowed for split)</label>
               <input value=${amount} onChange=${e => setAmount(e.target.value)} /></div>
+            ${isTakeaway && !order.token && html`
+              <label style=${{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0 12px', fontSize: '14px' }}>
+                <input type="checkbox" checked=${makeToken} onChange=${e => setMakeToken(e.target.checked)} />
+                Generate a pickup token</label>`}
             <div style=${{ display: 'flex', gap: '8px', marginTop: '8px' }}>
               <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
               <button class="btn accent" style=${{ flex: 2 }} disabled=${busy} onClick=${submit}>
                 ${busy ? 'Saving…' : 'Confirm payment'}</button>
             </div>
+          </div>
+        </div>`;
+    }
+
+    function PostPayModal({ result, onClose }) {
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()} style=${{ textAlign: 'center', maxWidth: '320px' }}>
+            <div style=${{ fontSize: '40px', lineHeight: 1, marginBottom: '6px' }}>✅</div>
+            <h3 style=${{ margin: '0 0 4px' }}>Paid ${rupee(result.total)}</h3>
+            ${result.token != null && html`
+              <div style=${{ margin: '14px 0 4px', color: 'var(--ink-soft)', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '.05em' }}>Pickup token</div>
+              <div style=${{ fontSize: '54px', fontWeight: 800, color: 'var(--brand)', lineHeight: 1 }}>${result.token}</div>`}
+            ${result.token == null && html`
+              <p style=${{ color: 'var(--ink-soft)', fontSize: '14px', margin: '6px 0 0' }}>
+                ${result.takeaway ? 'Takeaway order closed.' : (result.table ? (result.table + ' is now free.') : 'Order closed.')}</p>`}
+            <button class="btn accent" style=${{ width: '100%', marginTop: '18px' }} onClick=${onClose}>Done</button>
           </div>
         </div>`;
     }
@@ -417,7 +478,7 @@
             ${orders.map(o => html`
               <div class=${'ticket ' + o.status} key=${o.id}>
                 <div class="th">
-                  <b>${o.table_name || 'Takeaway'}</b>
+                  <b>${o.table_name || ('Takeaway' + (o.token ? ' · Token ' + o.token : ''))}</b>
                   <span class=${'badge ' + o.status}>${o.status}</span>
                 </div>
                 <div class="tl">

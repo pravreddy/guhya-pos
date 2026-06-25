@@ -25,9 +25,16 @@ Near-term, in order:
    onboarding activation engine: upload menu -> see your dishes in <60s.
    (Nuance: we still need a minimal edit UI — you must be able to fix a wrong
    price — but AI does the heavy populate; the "CRUD" IS the review surface.)
-2. **Service modes** (dine_in / takeaway / both; default = hybrid) + treat
-   Counter/Takeaway as a permanent VIRTUAL TABLE (is_virtual / id 0) so one code
-   path serves both — a counter order is just an order on the virtual table.
+2. **Service modes** (dine_in / takeaway, hybrid). DONE. Order has
+   `service_mode` + optional pickup `token`. Takeaway is a TABLE-LESS order (not
+   a single virtual-table row) so MANY takeaways run at once alongside dine-in —
+   better than the id-0 virtual table idea, which couldn't hold concurrent
+   takeaways. Cashier: Dine-in tables + "New takeaway" + a live list of open
+   takeaways to resume. Lazy order creation (order is created on FIRST item, not
+   on table tap) — fixes the stray-tap-occupies-table bug. At payment the cashier
+   can tick "Generate a pickup token" (per-restaurant, per-day, resets daily);
+   post-pay confirmation shows the token (or "table freed") — fixes the
+   order-vanishes-with-no-feedback gap. Kitchen ticket shows the token.
 3. **WhatsApp digital bill + UPI QR** (PULLED UP — a cafe can't run a day without
    a clean UPI flow). Bill on WhatsApp with a UPI deep-link QR: settles the bill
    AND captures the phone number for CRM in one move (the Trojan horse). Thermal
@@ -40,6 +47,12 @@ Near-term, in order:
    take an order during a blip, they abandon the system for pen + paper.
 5. **Role-based permissions** — lock endpoints per role before real staff use it.
 6. **Void / discount + day-close & weekly/monthly sales reports.**
+7. **Inventory — Phase 1 (item-level stock + movement log).** Per item: opening/
+   prepped qty for the day, auto-decrement on each sale, SOLD vs REMAINING at a
+   glance, auto-"86" at zero, low-stock alert, manual restock/waste/correction
+   with a reason, and a full stock-movement LOG (who/what/when). Answers "how
+   much did we start with, how much sold, how much left." Ingredient/recipe (BOM)
+   costing is Phase 2 (heavier, later). Specced in the Inventory section below.
 
 THEN the differentiated wedge (grows the restaurant's money, fits our AI/voice):
 CRM + loyalty + coupons + WhatsApp campaigns -> AI "Know" (read-only) first ->
@@ -157,6 +170,41 @@ at the same time — so it's a first-class mode, not an edge case:
       verification step — like signsimple's confirm flow — so both sides confirm
       EVERY item was handed over / received. Cuts "missing item" disputes. Reuse
       signsimple's verify pattern; ties into the receipt (#3) + customer record.
+
+## Inventory & stock (requested 2026-06-25 — started vs sold vs left, with a log)
+
+Two levels. Do the LIGHT one first; the heavy ingredient/recipe one only when a
+bigger kitchen actually needs it and will keep the data accurate during a rush.
+
+- [ ] **Phase 1 — item-level stock (light, right for Cafe Gopala).** Per menu
+      item, an OPTIONAL stock count: owner sets the OPENING / prepped qty for the
+      day; each sale auto-DECREMENTS it. Cashier/owner sees SOLD vs REMAINING at
+      a glance; item auto-marks unavailable ("86'd") at zero; low-stock badge
+      under a threshold. Items can be "untracked" (e.g. tea/coffee) so you only
+      track what matters (e.g. 30 biryanis prepped today). Manual adjustments —
+      restock, waste/spoilage, correction — each with a reason.
+- [ ] **Stock movement LOG (the audit trail you asked for).** Every change is one
+      row: type (opening / restock / sale / adjustment / waste / void-return),
+      item, qty delta, balance-after, reason, linked order (for sales), user,
+      timestamp. This is the "how much started, how much sold, how much left, who
+      changed it" record. Voids/cancels RETURN stock. Feeds day-close + reports.
+- [ ] **Surfacing.** "Orders done today" + per-item sold counts on the owner Home
+      / day-close (we already have order + line data; Phase-1 stock adds the
+      "remaining" column). Plugs into Reports (#6) and later the AI "Know" layer
+      ("how many biryanis left?").
+- [ ] **Phase 2 — ingredient / recipe (BOM) inventory (heavy; later, bigger
+      kitchens / upsell tier).** Raw-ingredient master with units (kg / L / pcs),
+      a recipe per dish (1 masala dosa = X batter + Y potato) so a sale depletes
+      INGREDIENTS, not just the dish. Adds supplier/vendor + purchase / GRN
+      entries, reorder levels + alerts, food costing / COGS + margin per dish,
+      and wastage tracking. **AI invoice digitisation** (scan a supplier bill ->
+      stock-in + payables, reuse the Gemini/DocSign pattern) feeds this. Gate it
+      behind a higher tier; don't build the inventory mountain before the POS is
+      earning its keep.
+
+NOTE: this supersedes the one-line "Inventory + recipe management" in the
+competitive table-stakes list (section A) and the Phase-2 inventory bullet in the
+"Ask. Know. Act." section — same feature, specced here.
 
 ## Competitive feature landscape — what established POS have that we don't (researched 2026)
 

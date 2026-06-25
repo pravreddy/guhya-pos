@@ -71,7 +71,8 @@ class OrderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ["id", "table", "table_name", "source", "status",
+        fields = ["id", "table", "table_name", "source", "service_mode",
+                  "token", "status",
                   "aggregator_name", "external_ref",
                   "subtotal", "tax_total", "total",
                   "amount_paid", "balance",

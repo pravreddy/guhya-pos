@@ -5,6 +5,7 @@ from django.contrib.auth import authenticate
 from django.db import transaction
 from django.db.models import ProtectedError
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -230,19 +231,40 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
         return Response(OrderSerializer(order).data)
 
     def create(self, request, *args, **kwargs):
+        service_mode = request.data.get("service_mode", Order.ServiceMode.DINE_IN)
+        if service_mode not in Order.ServiceMode.values:
+            return Response({"detail": "Invalid service mode."}, status=400)
         table = None
-        if request.data.get("table_id"):
+        # only dine-in orders sit on a table; takeaway is table-less (many at once)
+        if service_mode == Order.ServiceMode.DINE_IN and request.data.get("table_id"):
             table = Table.objects.for_current().filter(pk=request.data["table_id"]).first()
             if not table:
                 return Response({"detail": "Table not found."}, status=404)
         source = request.data.get("source", Order.Source.DINE_IN)
         if source not in Order.Source.values:
             return Response({"detail": "Invalid source."}, status=400)
-        order = Order.objects.create(table=table, source=source)
-        if table and source == Order.Source.DINE_IN:
+        order = Order.objects.create(table=table, source=source, service_mode=service_mode)
+        if table:
             table.status = Table.Status.OCCUPIED
             table.save(update_fields=["status"])
         return Response(OrderSerializer(order).data, status=201)
+
+    def _next_token(self):
+        """Next pickup token for this restaurant today (resets each day)."""
+        today = timezone.localdate()
+        last = (Order.objects.for_current()
+                .filter(created_at__date=today, token__isnull=False)
+                .order_by("-token").first())
+        return (last.token + 1) if (last and last.token) else 1
+
+    @action(detail=True, methods=["post"])
+    def assign_token(self, request, pk=None):
+        """Give this order a pickup token (no-op if it already has one)."""
+        order = self.get_object()
+        if order.token is None:
+            order.token = self._next_token()
+            order.save(update_fields=["token", "updated_at"])
+        return self._respond(order.pk)
 
     @action(detail=True, methods=["post"])
     def add_line(self, request, pk=None):
@@ -325,6 +347,10 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
             return Response({"detail": "Invalid amount."}, status=400)
         Payment.objects.create(order=order, method=method, amount=amount)
         fresh = self._fresh(order.pk)
+        # cashier may ask for a pickup token (takeaway) at payment time
+        if request.data.get("make_token") and fresh.token is None:
+            fresh.token = self._next_token()
+            fresh.save(update_fields=["token", "updated_at"])
         paid = sum((p.amount for p in fresh.payments.all()), Decimal("0"))
         if paid >= fresh.total:
             fresh.status = Order.Status.PAID
