@@ -18,7 +18,7 @@ from rest_framework.authtoken.models import Token
 from tenancy.current import set_current_tenant
 from accounts.models import User
 from catalog.models import MenuCategory, MenuItem
-from orders.models import Table, Order, OrderLine, Payment
+from orders.models import Table, Order, OrderLine, Payment, Customer
 from . import menu_import
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
@@ -287,7 +287,7 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
 
     # --- helpers: always serialize a FRESH read (no stale prefetch cache) ---
     def _fresh(self, pk):
-        return Order.objects.select_related("table").get(pk=pk)
+        return Order.objects.select_related("table", "customer").get(pk=pk)
 
     def _respond(self, pk, recalc=False):
         order = self._fresh(pk)
@@ -329,6 +329,26 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
         if order.token is None:
             order.token = self._next_token()
             order.save(update_fields=["token", "updated_at"])
+        return self._respond(order.pk)
+
+    @action(detail=True, methods=["post"])
+    def set_customer(self, request, pk=None):
+        """Attach (or clear) a customer on this order by phone. Upserts a
+        tenant-scoped Customer (optional, skippable). An empty phone clears it."""
+        order = self.get_object()
+        phone = (request.data.get("phone") or "").strip()
+        name = (request.data.get("name") or "").strip()
+        if not phone:
+            order.customer = None
+            order.save(update_fields=["customer", "updated_at"])
+            return self._respond(order.pk)
+        customer, _created = Customer.objects.for_current().get_or_create(
+            phone=phone, defaults={"name": name})
+        if name and not customer.name:        # fill a missing name, don't clobber
+            customer.name = name
+            customer.save(update_fields=["name"])
+        order.customer = customer
+        order.save(update_fields=["customer", "updated_at"])
         return self._respond(order.pk)
 
     @action(detail=True, methods=["post"])
@@ -423,6 +443,12 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
             if fresh.table_id:
                 fresh.table.status = Table.Status.FREE
                 fresh.table.save(update_fields=["status"])
+            if fresh.customer_id:        # roll up CRM stats on a fully-paid order
+                c = fresh.customer
+                c.visit_count = (c.visit_count or 0) + 1
+                c.total_spent = (c.total_spent or Decimal("0")) + fresh.total
+                c.last_order_at = timezone.now()
+                c.save(update_fields=["visit_count", "total_spent", "last_order_at"])
         return Response(OrderSerializer(fresh).data)
 
     @action(detail=False, methods=["get"])

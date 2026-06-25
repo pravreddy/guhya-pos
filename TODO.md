@@ -348,6 +348,13 @@ it, not rebuilding.
       wifi blip mid-rush — before Play Store packaging via Capacitor.
 - [ ] **Infra:** new public URL = another `stacks/<app>` entry + cert + route in
       avyangah-infra (same pattern as guhya-pos). Note in avyangah-infra BACKLOG.
+- [ ] **Platform support role (`pos_admin`).** A cross-restaurant support/staff
+      role (separate from the Django superuser) that can access ANY tenant to
+      help with support — read, and assist where needed. Today the only
+      cross-tenant account is the Django superuser (now hidden from per-restaurant
+      staff lists). Add a proper scoped support role so support staff can help
+      tenants WITHOUT sharing the superuser, every action audit-logged. Build when
+      there are multiple live tenants / alongside onboarding.
 
 ## Now / next (after frontend foundation)
 - [x] **Menu onboarding** — MERGED into "2. Menu management" above (AI import

@@ -108,6 +108,8 @@ class OrderSerializer(serializers.ModelSerializer):
     lines = OrderLineSerializer(many=True, read_only=True)
     payments = PaymentSerializer(many=True, read_only=True)
     table_name = serializers.CharField(source="table.name", read_only=True, default=None)
+    customer_phone = serializers.CharField(source="customer.phone", read_only=True, default=None)
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
     amount_paid = serializers.SerializerMethodField()
     balance = serializers.SerializerMethodField()
 
@@ -115,6 +117,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = ["id", "table", "table_name", "source", "service_mode",
                   "token", "status",
+                  "customer", "customer_phone", "customer_name",
                   "aggregator_name", "external_ref",
                   "subtotal", "tax_total", "total",
                   "amount_paid", "balance",

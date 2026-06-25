@@ -321,6 +321,13 @@
         try { await api('/tables/' + selTable.id + '/free/', { method: 'POST' }); clearSel(); await loadBase(); }
         catch (e) { alert(e.message); }
       };
+      const setCustomer = async (phone, name) => {
+        if (!order) return;
+        try {
+          const o = await api('/orders/' + order.id + '/set_customer/', { method: 'POST', body: { phone, name } });
+          setOrder(o); refreshActive();
+        } catch (e) { alert(e.message); }
+      };
       const onPaid = async (o) => {
         if (o.status === 'paid') {
           setPay(false);
@@ -399,6 +406,7 @@
               ${selKind === 'table' && order && html`
                 <button class="btn ghost sm" onClick=${freeTable}>Free table</button>`}
             </div>
+            ${order && html`<${CustomerBar} key=${order.id} order=${order} onSet=${setCustomer} />`}
             <div class="lines">
               ${!selKind && html`<div class="empty">Pick a table or start a takeaway to begin.</div>`}
               ${selKind && !order && html`<div class="empty">Tap menu items to add them.</div>`}
@@ -487,6 +495,42 @@
                 ${result.takeaway ? 'Takeaway order closed.' : (result.table ? (result.table + ' is now free.') : 'Order closed.')}</p>`}
             <button class="btn accent" style=${{ width: '100%', marginTop: '18px' }} onClick=${onClose}>Done</button>
           </div>
+        </div>`;
+    }
+
+    // Optional, skippable customer capture on the open bill (phone-first CRM).
+    function CustomerBar({ order, onSet }) {
+      const has = !!order.customer;
+      const [open, setOpen] = useState(false);
+      const [phone, setPhone] = useState('');
+      const [name, setName] = useState('');
+      const bar = { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderBottom: '1px solid var(--line)', background: '#faf7f1' };
+      const inp = { padding: '7px 9px', border: '1px solid var(--line)', borderRadius: '8px' };
+      const openEdit = () => { setPhone(order.customer_phone || ''); setName(order.customer_name || ''); setOpen(true); };
+      const save = () => { if (!phone.trim()) return; onSet(phone.trim(), name.trim()); setOpen(false); };
+      if (open) {
+        return html`
+          <div style=${{ ...bar, flexWrap: 'wrap', gap: '6px' }}>
+            <input placeholder="Phone" inputmode="tel" value=${phone} onChange=${e => setPhone(e.target.value)}
+              style=${{ ...inp, flex: 1, minWidth: '110px' }} />
+            <input placeholder="Name (optional)" value=${name} onChange=${e => setName(e.target.value)}
+              style=${{ ...inp, flex: 1, minWidth: '110px' }} />
+            <button class="btn sm" disabled=${!phone.trim()} onClick=${save}>Save</button>
+            <button class="btn ghost sm" onClick=${() => setOpen(false)}>Cancel</button>
+          </div>`;
+      }
+      if (has) {
+        return html`
+          <div style=${bar}>
+            <span style=${{ flex: 1, fontSize: '13px' }}>📱 ${order.customer_phone}${order.customer_name ? ' · ' + order.customer_name : ''}</span>
+            <button class="btn ghost sm" onClick=${openEdit}>Change</button>
+            <button class="btn ghost sm" onClick=${() => onSet('', '')}>Remove</button>
+          </div>`;
+      }
+      return html`
+        <div style=${bar}>
+          <span style=${{ flex: 1, fontSize: '13px', color: 'var(--ink-soft)' }}>Add customer phone (for bill / loyalty)</span>
+          <button class="btn ghost sm" onClick=${openEdit}>+ Add</button>
         </div>`;
     }
 

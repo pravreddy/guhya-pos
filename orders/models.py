@@ -18,6 +18,31 @@ class Table(TenantAwareModel):
     def __str__(self):
         return self.name
 
+class Customer(TenantAwareModel):
+    """A diner captured at billing (phone-first). Optional and skippable, but
+    once captured it seeds the CRM: visit count, spend, last visit. Unique by
+    phone within a restaurant."""
+    phone = models.CharField(max_length=20)
+    name = models.CharField(max_length=80, blank=True)
+    # consent to be contacted for marketing (loyalty/offers). Kept from day one
+    # so we never message people who didn't opt in.
+    marketing_consent = models.BooleanField(default=False)
+    # denormalised stats, updated when an order is fully paid:
+    visit_count = models.PositiveIntegerField(default=0)
+    total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    last_order_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-last_order_at", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "phone"],
+                                    name="uniq_customer_tenant_phone"),
+        ]
+
+    def __str__(self):
+        return self.name or self.phone
+
 class Order(TenantAwareModel):
     class Source(models.TextChoices):
         DINE_IN = "dine_in", "Dine-in"
@@ -40,6 +65,10 @@ class Order(TenantAwareModel):
 
     table = models.ForeignKey(Table, null=True, blank=True,
                               on_delete=models.SET_NULL, related_name="orders")
+    # optional diner attached at billing (CRM). SET_NULL so deleting a customer
+    # never destroys the order history.
+    customer = models.ForeignKey(Customer, null=True, blank=True,
+                                 on_delete=models.SET_NULL, related_name="orders")
     source = models.CharField(max_length=12, choices=Source.choices, default=Source.DINE_IN)
     service_mode = models.CharField(max_length=10, choices=ServiceMode.choices,
                                     default=ServiceMode.DINE_IN)
