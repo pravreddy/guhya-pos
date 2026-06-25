@@ -91,8 +91,15 @@ DATABASES = {
 AUTH_USER_MODEL = "accounts.User"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Menu AI import (reuses the Ollama box that care-ai runs) ---
-# Text model structures messy text; vision model reads photos / scanned PDFs.
+# --- Menu AI import ---
+# Provider: "auto" (Gemini if a key is set, else local Ollama) | "gemini" | "ollama".
+MENU_AI_PROVIDER = os.environ.get("MENU_AI_PROVIDER", "auto")
+# Gemini API (same key/var as DocSign). Get a free key at aistudio.google.com/apikey.
+# gemini-2.5-flash reads photos well; flash-lite is lighter (what DocSign uses).
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "120"))
+# Local Ollama fallback (text model structures text; vision model reads photos).
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_TEXT_MODEL = os.environ.get("OLLAMA_TEXT_MODEL", "llama3.2:3b")
 OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "llama3.2-vision")

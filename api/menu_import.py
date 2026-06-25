@@ -67,6 +67,57 @@ def _ollama_generate(prompt, images=None, model=None):
     return resp.json().get("response", "")
 
 
+# ---------------------------------------------------------------- Gemini call
+# Same Gemini API pattern as DocSign's ai_detector (generateContent + JSON out),
+# extended with inline image / PDF parts so it can read menu photos & PDFs.
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+
+def _provider():
+    """Which AI reads photos/PDFs: 'gemini' (cloud, fast) or 'ollama' (local)."""
+    p = (getattr(settings, "MENU_AI_PROVIDER", "auto") or "auto").lower()
+    if p in ("gemini", "ollama"):
+        return p
+    return "gemini" if getattr(settings, "GEMINI_API_KEY", "") else "ollama"
+
+
+def _gemini_generate(parts):
+    """Call the Gemini API with text and/or inline image/PDF parts; return text."""
+    key = getattr(settings, "GEMINI_API_KEY", "")
+    if not key:
+        raise MenuImportError("Gemini API key not configured.")
+    url = f"{GEMINI_API_URL}/{settings.GEMINI_MODEL}:generateContent?key={key}"
+    resp = None
+    try:
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "temperature": 0,
+                    "maxOutputTokens": 8192,
+                    "responseMimeType": "application/json",
+                },
+            },
+            timeout=settings.GEMINI_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        snippet = ""
+        if resp is not None:
+            try:
+                snippet = " " + resp.text[:200]
+            except Exception:
+                pass
+        raise MenuImportError(f"Gemini request failed: {e}.{snippet}")
+    raw = resp.json()
+    try:
+        return raw["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise MenuImportError("Gemini returned no readable menu. Try a clearer photo.")
+
+
 # ---------------------------------------------------------------- parse output
 
 def _num(v):
@@ -189,26 +240,39 @@ def extract_from_xlsx(raw):
 
 
 def extract_from_text(text):
-    out = _ollama_generate(EXTRACT_INSTRUCTIONS + "\n\nMenu text:\n\n" + text[:8000])
-    return _parse_rows(out)
+    prompt = EXTRACT_INSTRUCTIONS + "\n\nMenu text:\n\n" + text[:12000]
+    if _provider() == "gemini":
+        return _parse_rows(_gemini_generate([{"text": prompt}]))
+    return _parse_rows(_ollama_generate(prompt))
 
 
-def extract_from_images(b64_images):
-    out = _ollama_generate(
-        EXTRACT_INSTRUCTIONS + "\n\nRead the menu in the image(s) and output the JSON array.",
-        images=b64_images,
-        model=settings.OLLAMA_VISION_MODEL,
-    )
+def extract_from_images(b64_images, mime="image/png"):
+    instr = EXTRACT_INSTRUCTIONS + "\n\nRead the menu in the image(s) and output the JSON array."
+    if _provider() == "gemini":
+        parts = [{"text": instr}]
+        for b in b64_images:
+            parts.append({"inlineData": {"mimeType": mime, "data": b}})
+        return _parse_rows(_gemini_generate(parts))
+    out = _ollama_generate(instr, images=b64_images, model=settings.OLLAMA_VISION_MODEL)
     return _parse_rows(out)
 
 
 def extract_from_pdf(raw):
+    # Gemini reads a PDF directly (text or scanned) in one call.
+    if _provider() == "gemini":
+        b64 = base64.b64encode(raw).decode()
+        parts = [
+            {"text": EXTRACT_INSTRUCTIONS + "\n\nRead the menu in this PDF and output the JSON array."},
+            {"inlineData": {"mimeType": "application/pdf", "data": b64}},
+        ]
+        return _parse_rows(_gemini_generate(parts))
+    # Ollama path: pull text, else rasterise pages to images for the vision model.
     import fitz  # pymupdf
     doc = fitz.open(stream=raw, filetype="pdf")
     text = "\n".join(page.get_text() for page in doc)
     if len(re.sub(r"\s", "", text)) > 60 and any(ch.isdigit() for ch in text):
-        return extract_from_text(text)               # text-based PDF
-    images = []                                       # scanned / designed PDF
+        return extract_from_text(text)
+    images = []
     for page in list(doc)[:5]:
         pix = page.get_pixmap(dpi=150)
         images.append(base64.b64encode(pix.tobytes("png")).decode())

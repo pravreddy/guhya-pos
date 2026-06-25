@@ -642,7 +642,7 @@
               <input ref=${fileRef} type="file" accept="image/*,application/pdf,.csv,.xlsx" style=${{ display: 'none' }} onChange=${onFile} />
               <input ref=${camRef} type="file" accept="image/*" capture="environment" style=${{ display: 'none' }} onChange=${onFile} />
               ${uploading && html`<div style=${{ background: '#fff7e8', border: '1px solid var(--warn)', color: 'var(--warn)', padding: '9px 12px', borderRadius: '8px', fontSize: '13px', marginBottom: '10px' }}>
-                Reading your menu with AI… the first photo can take up to a minute.</div>`}
+                Reading your menu with AI… this usually takes a few seconds.</div>`}
               <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', margin: '6px 0 4px' }}>Or paste one item per line, e.g. <b>Masala Dosa 80</b>:</p>
               <textarea value=${text} onChange=${e => setText(e.target.value)} rows=${5}
                 style=${{ width: '100%', padding: '10px', border: '1px solid var(--line)', borderRadius: '10px', fontFamily: 'inherit', fontSize: '14px' }}></textarea>

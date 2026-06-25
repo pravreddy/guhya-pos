@@ -72,10 +72,22 @@ talks to the `/api/` that's already built, using token login for access per role
 - [x] **2. Menu management (write API + AI import, MERGED).** DONE. Writable
       category/item API (owner/admin only) + menu-manager screen. Import modal
       reads a photo / PDF / spreadsheet / CSV (or pasted text) into the SAME
-      review table -> owner corrects -> bulk create. AI uses the care-ai Ollama
-      box (text model for text, vision model for photos/scanned PDFs). CSV/XLSX
-      parse without AI. One operational dependency: pull the vision model on the
-      box (`ollama pull llama3.2-vision`, or a lighter one + set OLLAMA_VISION_MODEL).
+      review table -> owner corrects -> bulk create. AI provider is pluggable
+      (MENU_AI_PROVIDER=auto): Gemini API (fast, cloud, same key/pattern as
+      DocSign) when a key is set, else local Ollama vision. CSV/XLSX parse
+      without AI.
+- [ ] **Menu export (CSV / Excel / PDF / Word).** Let the owner DOWNLOAD their
+      current menu: CSV/XLSX for editing or moving elsewhere, PDF (and optionally
+      Word/doc) for a printable menu card. Inverse of import; reuses the same item
+      data. Value: backups, sharing, and "no lock-in" trust for the restaurant.
+      Low effort: CSV/XLSX server-side now; PDF via the same render path as the
+      receipt (#3) when that lands.
+- [ ] **DB backups (data safety) — IMPORTANT for a live customer.** `guhya_pos`
+      lives in the shared `careai-postgres` container (its own database; the app
+      container is stateless). No automated backup yet. Add a nightly `pg_dump`
+      of `guhya_pos` (gzip, retain N days, copy off-box), wired into
+      avyangah-infra like the monitoring stack. Manual snapshot meanwhile:
+      `docker exec careai-postgres pg_dump -U careai guhya_pos | gzip > guhya_pos_$(date +%F).sql.gz`.
 - [x] **3. Kitchen display (KDS)** — live ticket queue, start/ready/served,
       auto-refresh every 5s (polling). WebSocket push is the later upgrade.
 - [x] **4. Owner home** — role-routed landing: open orders, occupied tables.
