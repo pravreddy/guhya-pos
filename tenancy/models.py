@@ -10,6 +10,11 @@ class Tenant(models.Model):
     # is hardcoded). The UPI QR at billing switches on once upi_vpa is filled. ---
     upi_vpa = models.CharField(max_length=80, blank=True)        # e.g. cafegopala@okhdfcbank
     upi_payee_name = models.CharField(max_length=80, blank=True)  # shown in the customer's UPI app
+    whatsapp_number = models.CharField(max_length=20, blank=True)  # restaurant's WhatsApp/contact, shown on the bill
+    # tax / GST config — small eateries may not charge GST at all, and the rate
+    # isn't always 5%. Owner sets these in Settings.
+    gst_enabled = models.BooleanField(default=True)
+    default_gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=5)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

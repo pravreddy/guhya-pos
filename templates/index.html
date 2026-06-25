@@ -248,6 +248,40 @@
       } catch (e) { return null; }
     };
 
+    // Compose a plain-text bill for WhatsApp, and a wa.me click-to-chat link.
+    const buildBillText = (order, tenant) => {
+      const name = (tenant && tenant.name) || 'Our cafe';
+      const L = [];
+      L.push('*' + name + '*');
+      L.push('Bill #' + order.id
+        + (order.table_name ? ' · ' + order.table_name : '')
+        + (order.token != null ? ' · Token ' + order.token : ''));
+      L.push('');
+      (order.lines || []).forEach(l => {
+        L.push(l.qty + ' x ' + l.name_snapshot + (l.is_half ? ' (half)' : '') + '  ' + rupee(l.line_total));
+      });
+      L.push('');
+      if (Number(order.tax_total) > 0) {
+        L.push('Subtotal: ' + rupee(order.subtotal));
+        L.push('GST: ' + rupee(order.tax_total));
+      }
+      L.push('Total: ' + rupee(order.total));
+      if (Number(order.amount_paid) > 0) L.push('Paid: ' + rupee(order.amount_paid));
+      L.push('');
+      L.push('Thank you, please visit again!');
+      if (tenant && tenant.whatsapp_number) L.push(name + ' · ' + tenant.whatsapp_number);
+      return L.join('\n');
+    };
+
+    const waLink = (phone, text) => {
+      let digits = (phone || '').replace(/\D/g, '');
+      if (digits.length === 10) digits = '91' + digits;   // assume India for a bare 10-digit number
+      return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(text);
+    };
+
+    const tgShareLink = (text) => 'https://t.me/share/url?url=&text=' + encodeURIComponent(text);
+    const mailtoLink = (subject, body) => 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+
     // ---------------- Login ----------------
     function Login({ onLogin }) {
       const [u, setU] = useState(''); const [p, setP] = useState('');
@@ -347,10 +381,22 @@
           setOrder(o); refreshActive();
         } catch (e) { alert(e.message); }
       };
+      const sendBill = (channel, o) => {
+        const text = buildBillText(o, tenantInfo);
+        if (channel === 'whatsapp') {
+          const phone = o.customer_phone || '';
+          if (!phone && !confirm('No customer phone on this order. Open WhatsApp to choose a contact?')) return;
+          window.open(waLink(phone, text), '_blank');
+        } else if (channel === 'telegram') {
+          window.open(tgShareLink(text), '_blank');
+        } else if (channel === 'email') {
+          window.open(mailtoLink('Your bill from ' + ((tenantInfo && tenantInfo.name) || 'us'), text), '_blank');
+        }
+      };
       const onPaid = async (o) => {
         if (o.status === 'paid') {
           setPay(false);
-          setPayResult({ total: o.total, token: o.token, takeaway: o.service_mode === 'takeaway', table: o.table_name });
+          setPayResult({ total: o.total, token: o.token, takeaway: o.service_mode === 'takeaway', table: o.table_name, order: o, tenant: tenantInfo });
           clearSel(); await loadBase();
         } else { setOrder(o); }
       };
@@ -446,8 +492,9 @@
             </div>
             ${order && html`
               <div class="bill-foot">
-                <div class="row"><span class="muted">Subtotal</span><span>${rupee(order.subtotal)}</span></div>
-                <div class="row"><span class="muted">GST</span><span>${rupee(order.tax_total)}</span></div>
+                ${Number(order.tax_total) > 0 && html`
+                  <div class="row"><span class="muted">Subtotal</span><span>${rupee(order.subtotal)}</span></div>
+                  <div class="row"><span class="muted">GST</span><span>${rupee(order.tax_total)}</span></div>`}
                 <div class="row total"><span>Total</span><span>${rupee(order.total)}</span></div>
                 ${Number(order.amount_paid) > 0 && html`
                   <div class="row"><span class="muted">Paid</span><span>${rupee(order.amount_paid)}</span></div>
@@ -455,6 +502,14 @@
                 <button class="btn accent" style=${{ width: '100%', marginTop: '10px' }}
                         disabled=${order.lines.length === 0} onClick=${() => setPay(true)}>
                   Take payment · ${rupee(order.balance)}</button>
+                <div style=${{ marginTop: '10px' }}>
+                  <div style=${{ fontSize: '12px', color: 'var(--ink-soft)', marginBottom: '5px' }}>Send bill</div>
+                  <div style=${{ display: 'flex', gap: '6px' }}>
+                    <button class="btn ghost sm" style=${{ flex: 1 }} disabled=${order.lines.length === 0} onClick=${() => sendBill('whatsapp', order)}>WhatsApp</button>
+                    <button class="btn ghost sm" style=${{ flex: 1 }} disabled=${order.lines.length === 0} onClick=${() => sendBill('telegram', order)}>Telegram</button>
+                    <button class="btn ghost sm" style=${{ flex: 1 }} disabled=${order.lines.length === 0} onClick=${() => sendBill('email', order)}>Email</button>
+                  </div>
+                </div>
               </div>`}
           </div>
 
@@ -525,6 +580,15 @@
             ${result.token == null && html`
               <p style=${{ color: 'var(--ink-soft)', fontSize: '14px', margin: '6px 0 0' }}>
                 ${result.takeaway ? 'Takeaway order closed.' : (result.table ? (result.table + ' is now free.') : 'Order closed.')}</p>`}
+            ${result.order && html`
+              <div style=${{ marginTop: '16px', textAlign: 'left' }}>
+                <div style=${{ fontSize: '12px', color: 'var(--ink-soft)', marginBottom: '6px' }}>Send bill</div>
+                <div style=${{ display: 'flex', gap: '6px' }}>
+                  <button class="btn ghost sm" style=${{ flex: 1 }} onClick=${() => window.open(waLink(result.order.customer_phone || '', buildBillText(result.order, result.tenant)), '_blank')}>WhatsApp</button>
+                  <button class="btn ghost sm" style=${{ flex: 1 }} onClick=${() => window.open(tgShareLink(buildBillText(result.order, result.tenant)), '_blank')}>Telegram</button>
+                  <button class="btn ghost sm" style=${{ flex: 1 }} onClick=${() => window.open(mailtoLink('Your bill', buildBillText(result.order, result.tenant)), '_blank')}>Email</button>
+                </div>
+              </div>`}
             <button class="btn accent" style=${{ width: '100%', marginTop: '18px' }} onClick=${onClose}>Done</button>
           </div>
         </div>`;
@@ -634,13 +698,15 @@
       const [editItem, setEditItem] = useState(null);   // existing item, or { category } for new
       const [importCat, setImportCat] = useState(null); // category id for the import modal
       const [newCat, setNewCat] = useState('');
+      const [gstDefault, setGstDefault] = useState(5);
 
       const load = useCallback(async () => {
         setLoading(true);
         try {
-          const [c, i] = await Promise.all([api('/menu-categories/'), api('/menu-items/')]);
+          const [c, i, ti] = await Promise.all([api('/menu-categories/'), api('/menu-items/'), api('/tenant/').catch(() => null)]);
           setCats((c || []).slice().sort((a, b) => a.sort_order - b.sort_order));
           setItems(i || []);
+          if (ti && ti.default_gst_rate != null) setGstDefault(ti.default_gst_rate);
         } catch (e) { alert(e.message); } finally { setLoading(false); }
       }, []);
       useEffect(() => { load(); }, [load]);
@@ -722,7 +788,7 @@
               </div>`;
           })}
 
-          ${editItem && html`<${ItemModal} item=${editItem} cats=${cats}
+          ${editItem && html`<${ItemModal} item=${editItem} cats=${cats} defaultGst=${gstDefault}
               onClose=${() => setEditItem(null)} onSaved=${() => { setEditItem(null); load(); }} />`}
           ${importCat != null && html`<${ImportModal} cats=${cats}
               defaultCategoryName=${typeof importCat === 'number' ? (cats.find(c => c.id === importCat) || {}).name : null}
@@ -730,11 +796,11 @@
         </div>`;
     }
 
-    function ItemModal({ item, cats, onClose, onSaved }) {
+    function ItemModal({ item, cats, defaultGst, onClose, onSaved }) {
       const isNew = !item.id;
       const [f, setF] = useState({
         name: item.name || '', price: item.price || '', half_price: item.half_price || '',
-        food_type: item.food_type || 'veg', gst_rate: item.gst_rate != null ? item.gst_rate : 5,
+        food_type: item.food_type || 'veg', gst_rate: item.gst_rate != null ? item.gst_rate : (defaultGst != null ? defaultGst : 5),
         is_available: item.is_available != null ? item.is_available : true,
         category: item.category || (cats[0] && cats[0].id),
       });
@@ -984,14 +1050,16 @@
       const [loading, setLoading] = useState(true);
       const [tName, setTName] = useState(''); const [tSeats, setTSeats] = useState('4');
       const [uName, setUName] = useState(''); const [uPass, setUPass] = useState(''); const [uRole, setURole] = useState('cashier');
-      const [vpa, setVpa] = useState(''); const [payee, setPayee] = useState('');
+      const [vpa, setVpa] = useState(''); const [payee, setPayee] = useState(''); const [wa, setWa] = useState('');
+      const [gstEnabled, setGstEnabled] = useState(true); const [gstRate, setGstRate] = useState('5');
 
       const load = useCallback(async () => {
         setLoading(true);
         try {
           const [t, u, ti] = await Promise.all([api('/tables-admin/'), api('/users-admin/'), api('/tenant/')]);
           setTables(t || []); setUsers(u || []);
-          if (ti) { setVpa(ti.upi_vpa || ''); setPayee(ti.upi_payee_name || ''); }
+          if (ti) { setVpa(ti.upi_vpa || ''); setPayee(ti.upi_payee_name || ''); setWa(ti.whatsapp_number || '');
+            setGstEnabled(ti.gst_enabled !== false); setGstRate(ti.default_gst_rate != null ? String(ti.default_gst_rate) : '5'); }
         } catch (e) { alert(e.message); } finally { setLoading(false); }
       }, []);
       useEffect(() => { load(); }, [load]);
@@ -1033,7 +1101,11 @@
         catch (e) { alert(e.message); }
       };
       const savePayments = async () => {
-        try { await api('/tenant/', { method: 'PATCH', body: { upi_vpa: vpa.trim(), upi_payee_name: payee.trim() } }); alert('Payment settings saved.'); }
+        try { await api('/tenant/', { method: 'PATCH', body: { upi_vpa: vpa.trim(), upi_payee_name: payee.trim(), whatsapp_number: wa.trim() } }); alert('Payment settings saved.'); }
+        catch (e) { alert(e.message); }
+      };
+      const saveTax = async () => {
+        try { await api('/tenant/', { method: 'PATCH', body: { gst_enabled: gstEnabled, default_gst_rate: gstRate === '' ? 0 : gstRate } }); alert('Tax settings saved.'); }
         catch (e) { alert(e.message); }
       };
 
@@ -1047,17 +1119,37 @@
 
           <div style=${cardStyle}>
             <div style=${headStyle}>
-              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Payments · UPI</b>
+              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Payments &amp; WhatsApp</b>
             </div>
             <div style=${{ padding: '14px' }}>
               <p style=${{ margin: '0 0 12px', color: 'var(--ink-soft)', fontSize: '13px' }}>
-                Enter your UPI ID — a scan-to-pay QR then shows on the pay screen automatically. The customer scans and pays; you tap Confirm once the money lands (no fees, no gateway).</p>
+                Enter your UPI ID — a scan-to-pay QR then shows on the pay screen automatically (customer scans &amp; pays; you tap Confirm once the money lands; no fees, no gateway). The WhatsApp number is shown on bills you send to customers.</p>
               <div style=${{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <label style=${{ fontSize: '12px', color: 'var(--ink-soft)', flex: 1, minWidth: '210px' }}>UPI ID (VPA)<br/>
                   <input placeholder="e.g. cafegopala@okhdfcbank" value=${vpa} onChange=${e => setVpa(e.target.value)} style=${{ ...inp, width: '100%' }} /></label>
                 <label style=${{ fontSize: '12px', color: 'var(--ink-soft)', flex: 1, minWidth: '170px' }}>Payee name shown<br/>
                   <input placeholder="e.g. Cafe Gopala" value=${payee} onChange=${e => setPayee(e.target.value)} style=${{ ...inp, width: '100%' }} /></label>
+                <label style=${{ fontSize: '12px', color: 'var(--ink-soft)', flex: 1, minWidth: '170px' }}>WhatsApp number<br/>
+                  <input placeholder="e.g. 9876543210" inputmode="tel" value=${wa} onChange=${e => setWa(e.target.value)} style=${{ ...inp, width: '100%' }} /></label>
                 <button class="btn sm" onClick=${savePayments}>Save</button>
+              </div>
+            </div>
+          </div>
+
+          <div style=${cardStyle}>
+            <div style=${headStyle}>
+              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Tax / GST</b>
+            </div>
+            <div style=${{ padding: '14px' }}>
+              <label style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', marginBottom: '10px' }}>
+                <input type="checkbox" checked=${gstEnabled} onChange=${e => setGstEnabled(e.target.checked)} />
+                Charge GST on bills</label>
+              <p style=${{ margin: '0 0 12px', color: 'var(--ink-soft)', fontSize: '13px' }}>
+                Turn this off for a small eatery with no GST — bills then show just the total, no tax line. When on, each menu item can carry its own rate; the default below is used for new items.</p>
+              <div style=${{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+                <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>Default GST %<br/>
+                  <input value=${gstRate} inputmode="decimal" disabled=${!gstEnabled} onChange=${e => setGstRate(e.target.value)} style=${{ ...inp, width: '110px' }} /></label>
+                <button class="btn sm" onClick=${saveTax}>Save</button>
               </div>
             </div>
           </div>

@@ -92,13 +92,15 @@ class Order(TenantAwareModel):
         return f"Order #{self.pk} ({self.get_source_display()})"
 
     def recalculate(self, save=True):
-        """Recompute totals from the lines. GST here is added on top
-        (exclusive). Switch to inclusive later if you prefer."""
+        """Recompute totals from the lines. GST is added on top (exclusive).
+        If the restaurant has GST disabled, tax is zero and total == subtotal."""
         subtotal = Decimal("0")
         tax = Decimal("0")
+        gst_on = getattr(self.tenant, "gst_enabled", True) if self.tenant_id else True
         for line in self.lines.all():
             subtotal += line.line_total
-            tax += line.line_total * line.gst_rate / Decimal("100")
+            if gst_on:
+                tax += line.line_total * (line.gst_rate or Decimal("0")) / Decimal("100")
         self.subtotal = subtotal.quantize(Decimal("0.01"))
         self.tax_total = tax.quantize(Decimal("0.01"))
         self.total = (self.subtotal + self.tax_total).quantize(Decimal("0.01"))

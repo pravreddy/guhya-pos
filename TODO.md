@@ -142,7 +142,21 @@ talks to the `/api/` that's already built, using token login for access per role
       Confirm (no gateway/fees; can't auto-confirm — that's Phase 3b Razorpay).
       QR rendered client-side (qrcode-generator via CDN). `GET /tenant/` is
       readable by any tenant user (cashier needs the VPA); PATCH owner/admin only.
-      NEXT in 3a: wa.me WhatsApp bill link.
+- [x] **Phase 3a — bill delivery channels + configurable GST (DONE).** Send the
+      bill from the cashier bill or the post-pay screen via THREE free channels,
+      all click-to-send (no API, no per-message cost, and none need the customer
+      to message first): WhatsApp (wa.me to the captured customer phone),
+      Telegram (t.me/share), and Email (mailto: — opens the cashier's mail app).
+      The restaurant WhatsApp number is owner-configurable (Settings → Payments &
+      WhatsApp) and shown on the bill. GST is now PER-TENANT configurable
+      (Settings → Tax / GST): toggle GST on/off (off = bills show only the total,
+      no tax line; recalculate() zeroes tax) and set a default rate used for new
+      menu items (each item still keeps its own rate). For no-GST small eateries.
+      LATER (3b automation): Telegram BOT + Email SMTP server-send so bills go out
+      automatically without the cashier tapping (Telegram bot needs the customer
+      to /start it; SMTP auto-send needs a captured customer email — add a
+      Customer.email field then; the box already runs mailcow for SMTP). For now
+      all three channels are manual click-send.
 - [ ] **Attendance — biometric device integration (Cafe Gopala already OWNS the
       hardware).** They have a Petpooja payroll/attendance biometric marker
       (Bluetooth/WiFi) — refs: posmarket.in petpooja-payroll-attendance device +

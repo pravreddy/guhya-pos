@@ -111,7 +111,8 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     later). Readable by any tenant user so the cashier can build the UPI QR."""
     class Meta:
         model = Tenant
-        fields = ["id", "name", "upi_vpa", "upi_payee_name"]
+        fields = ["id", "name", "upi_vpa", "upi_payee_name", "whatsapp_number",
+                  "gst_enabled", "default_gst_rate"]
         read_only_fields = ["id"]
 
 
