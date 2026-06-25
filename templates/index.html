@@ -518,7 +518,7 @@
         <div style=${{ padding: '18px', maxWidth: '920px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
           <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px' }}>
             <h2 style=${{ margin: 0, flex: 1 }}>Menu</h2>
-            <button class="btn sm ghost" onClick=${() => apiDownload('/menu-export/?format=csv', 'menu.csv')}>Export CSV</button>
+            <button class="btn sm ghost" onClick=${() => apiDownload('/menu-export/?fmt=csv', 'menu.csv')}>Export CSV</button>
             <button class="btn sm ghost" onClick=${() => setImportCat('all')}>Import menu</button>
             <input placeholder="New category" value=${newCat} onChange=${e => setNewCat(e.target.value)}
                    onKeyDown=${e => e.key === 'Enter' && addCategory()}

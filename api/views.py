@@ -170,7 +170,9 @@ class MenuExportView(TenantViewMixin, APIView):
         return out
 
     def get(self, request):
-        fmt = request.query_params.get("format", "csv").lower()
+        # NB: use "fmt", not "format" - DRF reserves "format" for content
+        # negotiation and would 404 before this view runs.
+        fmt = request.query_params.get("fmt", "csv").lower()
         rows = self._rows()
         if fmt in ("xlsx", "excel"):
             import openpyxl
