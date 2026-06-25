@@ -249,7 +249,10 @@ class UserAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
     permission_classes = [IsOwnerOrAdmin]
 
     def get_queryset(self):
-        return User.objects.filter(tenant=self.request.user.tenant).order_by("id")
+        # Hide platform superusers (e.g. the cross-restaurant admin) from any
+        # single restaurant's staff list.
+        return (User.objects.filter(tenant=self.request.user.tenant)
+                .exclude(is_superuser=True).order_by("id"))
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.user.tenant)
