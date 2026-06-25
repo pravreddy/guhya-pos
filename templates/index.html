@@ -182,6 +182,18 @@
       return data;
     }
 
+    // multipart upload (file/photo) — same token auth, no JSON content-type
+    async function apiUpload(path, formData) {
+      const auth = loadAuth();
+      const headers = {};
+      if (auth?.token) headers['Authorization'] = 'Token ' + auth.token;
+      const res = await fetch('/api' + path, { method: 'POST', headers, body: formData });
+      if (res.status === 401) { clearAuth(); location.reload(); return; }
+      const data = res.status === 204 ? null : await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || ('Upload failed (' + res.status + ')'));
+      return data;
+    }
+
     const rupee = (n) => '₹' + Number(n || 0).toFixed(2);
     const FOOD = { veg: 'veg', nonveg: 'nonveg', egg: 'egg' };
 
@@ -569,14 +581,34 @@
       const [text, setText] = useState('');
       const [rows, setRows] = useState(null);
       const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
-      const parse = () => {
+      const [uploading, setUploading] = useState(false);
+      const fileRef = useRef(null); const camRef = useRef(null);
+
+      const parseText = () => {
         const out = text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
           const m = line.match(/^(.*?)[\s,\-–]+(\d+(?:\.\d+)?)\s*$/);
-          return m ? { name: m[1].trim(), price: m[2], food_type: 'veg', gst_rate: 5 }
-                   : { name: line, price: '', food_type: 'veg', gst_rate: 5 };
+          return m ? { name: m[1].trim(), price: m[2], half_price: null, food_type: 'veg', gst_rate: 5 }
+                   : { name: line, price: '', half_price: null, food_type: 'veg', gst_rate: 5 };
         });
         setRows(out);
       };
+
+      const onFile = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        setErr(''); setUploading(true);
+        try {
+          const fd = new FormData(); fd.append('file', file);
+          const data = await apiUpload('/menu-import/', fd);
+          if (!data || !data.rows || data.rows.length === 0) {
+            setErr('Could not read any items from that file. Try a clearer photo, or use the paste box below.');
+          } else {
+            setRows(data.rows);
+          }
+        } catch (e2) { setErr(e2.message); } finally { setUploading(false); }
+      };
+
       const setRow = (i, k, v) => setRows(rs => rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
       const removeRow = (i) => setRows(rs => rs.filter((_, j) => j !== i));
       const ready = rows ? rows.filter(r => r.name && r.price !== '') : [];
@@ -585,8 +617,8 @@
         try {
           for (const r of ready) {
             await api('/menu-items/', { method: 'POST', body: {
-              name: r.name, price: r.price, food_type: r.food_type,
-              gst_rate: r.gst_rate, is_available: true, category: categoryId,
+              name: r.name, price: r.price, half_price: r.half_price != null && r.half_price !== '' ? r.half_price : null,
+              food_type: r.food_type, gst_rate: r.gst_rate, is_available: true, category: categoryId,
             } });
           }
           onDone();
@@ -599,13 +631,24 @@
             ${err && html`<div class="err">${err}</div>`}
             ${!rows && html`
               <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>
-                Paste one item per line, e.g. <b>Masala Dosa 80</b>. You'll review and edit before saving.
-                <br/>(Photo / spreadsheet AI import will plug into this same review step next.)</p>
-              <textarea value=${text} onChange=${e => setText(e.target.value)} rows=${8}
+                Upload a <b>photo, PDF, or spreadsheet</b> of the menu and AI reads it — or paste items below.
+                You'll review and edit everything before saving.</p>
+              <div style=${{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <button class="btn" style=${{ flex: 1 }} disabled=${uploading} onClick=${() => fileRef.current && fileRef.current.click()}>
+                  ${uploading ? 'Reading…' : 'Upload file / photo'}</button>
+                <button class="btn ghost" style=${{ flex: 1 }} disabled=${uploading} onClick=${() => camRef.current && camRef.current.click()}>
+                  Take photo</button>
+              </div>
+              <input ref=${fileRef} type="file" accept="image/*,application/pdf,.csv,.xlsx" style=${{ display: 'none' }} onChange=${onFile} />
+              <input ref=${camRef} type="file" accept="image/*" capture="environment" style=${{ display: 'none' }} onChange=${onFile} />
+              ${uploading && html`<div style=${{ background: '#fff7e8', border: '1px solid var(--warn)', color: 'var(--warn)', padding: '9px 12px', borderRadius: '8px', fontSize: '13px', marginBottom: '10px' }}>
+                Reading your menu with AI… the first photo can take up to a minute.</div>`}
+              <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', margin: '6px 0 4px' }}>Or paste one item per line, e.g. <b>Masala Dosa 80</b>:</p>
+              <textarea value=${text} onChange=${e => setText(e.target.value)} rows=${5}
                 style=${{ width: '100%', padding: '10px', border: '1px solid var(--line)', borderRadius: '10px', fontFamily: 'inherit', fontSize: '14px' }}></textarea>
               <div style=${{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                 <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
-                <button class="btn" style=${{ flex: 2 }} disabled=${!text.trim()} onClick=${parse}>Review</button>
+                <button class="btn" style=${{ flex: 2 }} disabled=${!text.trim() || uploading} onClick=${parseText}>Review pasted</button>
               </div>`}
             ${rows && html`
               <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>Review and fix, then save. Rows without a price are skipped.</p>

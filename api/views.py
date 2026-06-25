@@ -3,6 +3,8 @@ from django.contrib.auth import authenticate
 from django.db import transaction
 from django.db.models import ProtectedError
 from rest_framework import viewsets, permissions
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import (
     action, api_view, permission_classes, authentication_classes,
 )
@@ -13,6 +15,7 @@ from tenancy.current import set_current_tenant
 from accounts.models import User
 from catalog.models import MenuCategory, MenuItem
 from orders.models import Table, Order, OrderLine, Payment
+from . import menu_import
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
     MenuCategoryAdminSerializer, MenuItemAdminSerializer,
@@ -113,6 +116,29 @@ class MenuItemAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
                            "Mark it unavailable instead of deleting."},
                 status=400,
             )
+
+
+class MenuImportView(TenantViewMixin, APIView):
+    """Owner/admin uploads a CSV / spreadsheet / PDF / photo of a menu; we return
+    DRAFT rows for the review screen. Nothing is saved here - the owner confirms
+    on the frontend and items are created via the normal menu-items endpoint."""
+    permission_classes = [IsOwnerOrAdmin]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"detail": "No file uploaded."}, status=400)
+        raw = f.read()
+        if not raw:
+            return Response({"detail": "The file is empty."}, status=400)
+        if len(raw) > 20 * 1024 * 1024:
+            return Response({"detail": "File too large (max 20 MB)."}, status=400)
+        try:
+            rows, source = menu_import.parse_upload(f.name, f.content_type, raw)
+        except menu_import.MenuImportError as e:
+            return Response({"detail": str(e)}, status=400)
+        return Response({"rows": rows, "source": source, "count": len(rows)})
 
 
 class TableViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):

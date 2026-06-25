@@ -69,13 +69,13 @@ talks to the `/api/` that's already built, using token login for access per role
       `templates/index.html` + SPA catch-all. Root URL now shows a real login.
 - [x] **1. Cashier screen** — tables -> menu -> live GST bill -> split payment
       (cash/UPI/card). Uses the existing order endpoints.
-- [ ] **2. Menu management (write API + AI import, MERGED).** `MenuViewSet` is
-      read-only -> add create/update/delete for items + categories (needed either
-      way). Build ONE menu-manager screen (add/edit/delete) that ALSO serves as
-      the AI "Review & Confirm" screen: owner uploads a photo / spreadsheet of the
-      menu, the LLM (care-ai pipeline) parses it into MenuCategory/MenuItem, and
-      the owner corrects + confirms on that same screen. No separate manual CRUD
-      then AI tool. (The old standalone "Menu onboarding" item is now merged here.)
+- [x] **2. Menu management (write API + AI import, MERGED).** DONE. Writable
+      category/item API (owner/admin only) + menu-manager screen. Import modal
+      reads a photo / PDF / spreadsheet / CSV (or pasted text) into the SAME
+      review table -> owner corrects -> bulk create. AI uses the care-ai Ollama
+      box (text model for text, vision model for photos/scanned PDFs). CSV/XLSX
+      parse without AI. One operational dependency: pull the vision model on the
+      box (`ollama pull llama3.2-vision`, or a lighter one + set OLLAMA_VISION_MODEL).
 - [x] **3. Kitchen display (KDS)** — live ticket queue, start/ready/served,
       auto-refresh every 5s (polling). WebSocket push is the later upgrade.
 - [x] **4. Owner home** — role-routed landing: open orders, occupied tables.
