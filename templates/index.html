@@ -199,6 +199,21 @@
       return data;
     }
 
+    // download a file (CSV/Excel) with token auth, then trigger a browser save
+    async function apiDownload(path, filename) {
+      const auth = loadAuth();
+      const headers = {};
+      if (auth?.token) headers['Authorization'] = 'Token ' + auth.token;
+      const res = await fetch('/api' + path, { headers });
+      if (!res.ok) { alert('Export failed (' + res.status + ')'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
     const rupee = (n) => '₹' + Number(n || 0).toFixed(2);
     const FOOD = { veg: 'veg', nonveg: 'nonveg', egg: 'egg' };
 
@@ -491,6 +506,11 @@
         try { await api('/menu-items/' + it.id + '/', { method: 'PATCH', body: { is_available: !it.is_available } }); load(); }
         catch (e) { alert(e.message); }
       };
+      const moveItem = async (it, catId) => {
+        if (catId === it.category) return;
+        try { await api('/menu-items/' + it.id + '/', { method: 'PATCH', body: { category: catId } }); load(); }
+        catch (e) { alert(e.message); }
+      };
 
       if (loading) return html`<div class="center-msg">Loading menu…</div>`;
 
@@ -498,6 +518,7 @@
         <div style=${{ padding: '18px', maxWidth: '920px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
           <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px' }}>
             <h2 style=${{ margin: 0, flex: 1 }}>Menu</h2>
+            <button class="btn sm ghost" onClick=${() => apiDownload('/menu-export/?format=csv', 'menu.csv')}>Export CSV</button>
             <button class="btn sm ghost" onClick=${() => setImportCat('all')}>Import menu</button>
             <input placeholder="New category" value=${newCat} onChange=${e => setNewCat(e.target.value)}
                    onKeyDown=${e => e.key === 'Enter' && addCategory()}
@@ -527,6 +548,10 @@
                       <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>
                         ${rupee(it.price)}${Number(it.half_price) > 0 ? ' · half ' + rupee(it.half_price) : ''} · GST ${it.gst_rate}%</div>
                     </div>
+                    <select title="Move to category" value=${it.category} onChange=${e => moveItem(it, Number(e.target.value))}
+                      style=${{ padding: '6px 8px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)', fontSize: '13px', maxWidth: '150px' }}>
+                      ${cats.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+                    </select>
                     <button class="btn ghost sm" onClick=${() => toggleAvail(it)}>${it.is_available ? 'Available' : 'Hidden'}</button>
                     <button class="btn ghost sm" onClick=${() => setEditItem(it)}>Edit</button>
                     <button class="btn ghost sm" onClick=${() => deleteItem(it)}>Delete</button>

@@ -76,12 +76,12 @@ talks to the `/api/` that's already built, using token login for access per role
       (MENU_AI_PROVIDER=auto): Gemini API (fast, cloud, same key/pattern as
       DocSign) when a key is set, else local Ollama vision. CSV/XLSX parse
       without AI.
-- [ ] **Menu export (CSV / Excel / PDF / Word).** Let the owner DOWNLOAD their
-      current menu: CSV/XLSX for editing or moving elsewhere, PDF (and optionally
-      Word/doc) for a printable menu card. Inverse of import; reuses the same item
-      data. Value: backups, sharing, and "no lock-in" trust for the restaurant.
-      Low effort: CSV/XLSX server-side now; PDF via the same render path as the
-      receipt (#3) when that lands.
+- [x] **Menu export + reformat existing menu.** DONE (CSV/Excel; PDF/Word later).
+      Owner can DOWNLOAD the menu (Export CSV) in the same column layout the
+      importer reads -> edit in a sheet -> re-import = full reformat loop. Plus
+      in-app reorg anytime: a per-item "move to category" dropdown, rename/delete
+      categories, and AI re-import with category suggestions. (TODO later: PDF/
+      Word printable menu card via the receipt render path; bulk multi-select move.)
 - [ ] **DB backups (data safety) — IMPORTANT for a live customer.** `guhya_pos`
       lives in the shared `careai-postgres` container (its own database; the app
       container is stateless). No automated backup yet. Add a nightly `pg_dump`

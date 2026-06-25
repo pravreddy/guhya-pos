@@ -1,7 +1,10 @@
 from decimal import Decimal, InvalidOperation
+import csv
+import io
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.db.models import ProtectedError
+from django.http import HttpResponse
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -139,6 +142,58 @@ class MenuImportView(TenantViewMixin, APIView):
         except menu_import.MenuImportError as e:
             return Response({"detail": str(e)}, status=400)
         return Response({"rows": rows, "source": source, "count": len(rows)})
+
+
+class MenuExportView(TenantViewMixin, APIView):
+    """Owner/admin downloads the current menu as CSV or Excel. Same column layout
+    the importer understands, so export -> edit in a sheet -> re-import works as a
+    full 'reformat' loop."""
+    permission_classes = [IsOwnerOrAdmin]
+
+    HEADER = ["category", "name", "price", "half_price",
+              "food_type", "gst_rate", "is_available"]
+
+    def _rows(self):
+        items = (MenuItem.objects.for_current().select_related("category")
+                 .order_by("category__sort_order", "category__name", "name"))
+        out = [self.HEADER]
+        for it in items:
+            out.append([
+                it.category.name if it.category_id else "",
+                it.name,
+                it.price,
+                it.half_price if it.half_price is not None else "",
+                it.food_type,
+                it.gst_rate,
+                "yes" if it.is_available else "no",
+            ])
+        return out
+
+    def get(self, request):
+        fmt = request.query_params.get("format", "csv").lower()
+        rows = self._rows()
+        if fmt in ("xlsx", "excel"):
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Menu"
+            for r in rows:
+                ws.append(r)
+            buf = io.BytesIO()
+            wb.save(buf)
+            resp = HttpResponse(
+                buf.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            resp["Content-Disposition"] = 'attachment; filename="menu.xlsx"'
+            return resp
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        for r in rows:
+            writer.writerow(r)
+        resp = HttpResponse(buf.getvalue(), content_type="text/csv")
+        resp["Content-Disposition"] = 'attachment; filename="menu.csv"'
+        return resp
 
 
 class TableViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):

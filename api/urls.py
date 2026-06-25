@@ -12,4 +12,5 @@ router.register("orders", views.OrderViewSet, basename="orders")
 urlpatterns = [
     path("auth/login/", views.login, name="api-login"),
     path("menu-import/", views.MenuImportView.as_view(), name="menu-import"),
+    path("menu-export/", views.MenuExportView.as_view(), name="menu-export"),
 ] + router.urls
