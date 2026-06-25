@@ -807,12 +807,85 @@
         </div>`;
     }
 
+    // ---------------- Settings (owner/admin) ----------------
+    function TableRow({ t, onSave, onDelete }) {
+      const [name, setName] = useState(t.name);
+      const [seats, setSeats] = useState(String(t.seats));
+      const dirty = name.trim() !== t.name || String(seats) !== String(t.seats);
+      return html`
+        <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+          <input value=${name} onChange=${e => setName(e.target.value)}
+            style=${{ flex: 1, padding: '8px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+          <input type="number" min="1" value=${seats} onChange=${e => setSeats(e.target.value)}
+            style=${{ width: '80px', padding: '8px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+          <span style=${{ fontSize: '12px', color: 'var(--ink-soft)', minWidth: '64px' }}>${t.status}</span>
+          <button class="btn sm" disabled=${!dirty || !name.trim()}
+            onClick=${() => onSave(t, { name: name.trim(), seats: Number(seats) || 1 })}>Save</button>
+          <button class="btn ghost sm" onClick=${() => onDelete(t)}>Delete</button>
+        </div>`;
+    }
+
+    function Settings() {
+      const [tables, setTables] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [name, setName] = useState(''); const [seats, setSeats] = useState('4');
+
+      const load = useCallback(async () => {
+        setLoading(true);
+        try { setTables(await api('/tables-admin/') || []); }
+        catch (e) { alert(e.message); } finally { setLoading(false); }
+      }, []);
+      useEffect(() => { load(); }, [load]);
+
+      const addTable = async () => {
+        const nm = name.trim(); if (!nm) return;
+        try { await api('/tables-admin/', { method: 'POST', body: { name: nm, seats: Number(seats) || 1 } });
+          setName(''); setSeats('4'); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const saveTable = async (t, patch) => {
+        try { await api('/tables-admin/' + t.id + '/', { method: 'PATCH', body: patch }); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const deleteTable = async (t) => {
+        if (!confirm('Delete table "' + t.name + '"?')) return;
+        try { await api('/tables-admin/' + t.id + '/', { method: 'DELETE' }); load(); }
+        catch (e) { alert(e.message); }
+      };
+
+      if (loading) return html`<div class="center-msg">Loading…</div>`;
+      return html`
+        <div style=${{ padding: '18px', maxWidth: '720px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+          <h2 style=${{ marginTop: 0 }}>Settings</h2>
+          <div style=${{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+            <div style=${{ display: 'flex', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--line)' }}>
+              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Dine-in tables</b>
+              <span style=${{ color: 'var(--ink-soft)', fontSize: '13px' }}>${tables.length} table${tables.length === 1 ? '' : 's'}</span>
+            </div>
+            ${tables.length === 0 && html`<div style=${{ padding: '12px 14px', color: 'var(--ink-soft)', fontSize: '14px' }}>No tables yet. Add one below.</div>`}
+            ${tables.map(t => html`<${TableRow} key=${t.id} t=${t} onSave=${saveTable} onDelete=${deleteTable} />`)}
+            <div style=${{ display: 'flex', gap: '8px', padding: '12px 14px', alignItems: 'center' }}>
+              <input placeholder="Table name (e.g. T7)" value=${name} onChange=${e => setName(e.target.value)}
+                onKeyDown=${e => e.key === 'Enter' && addTable()}
+                style=${{ flex: 1, padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+              <input type="number" min="1" placeholder="Seats" value=${seats} onChange=${e => setSeats(e.target.value)}
+                style=${{ width: '90px', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+              <button class="btn sm" onClick=${addTable}>Add table</button>
+            </div>
+          </div>
+          <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: '12px' }}>
+            A table with an open order can't be deleted — settle or move that order first.
+            (Payment &amp; branding settings will live here too.)</p>
+        </div>`;
+    }
+
     // ---------------- Shell + routing ----------------
     const TABS = {
-      cashier: { label: 'Cashier', comp: Cashier, roles: ['owner', 'admin', 'cashier', 'waiter'] },
-      kitchen: { label: 'Kitchen', comp: Kitchen, roles: ['owner', 'admin', 'kitchen'] },
-      menu:    { label: 'Menu',    comp: MenuManager, roles: ['owner', 'admin'] },
-      home:    { label: 'Home',    comp: Home,    roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
+      cashier:  { label: 'Cashier',  comp: Cashier, roles: ['owner', 'admin', 'cashier', 'waiter'] },
+      kitchen:  { label: 'Kitchen',  comp: Kitchen, roles: ['owner', 'admin', 'kitchen'] },
+      menu:     { label: 'Menu',     comp: MenuManager, roles: ['owner', 'admin'] },
+      settings: { label: 'Settings', comp: Settings, roles: ['owner', 'admin'] },
+      home:     { label: 'Home',     comp: Home,    roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
     };
 
     function App() {

@@ -22,7 +22,7 @@ from orders.models import Table, Order, OrderLine, Payment
 from . import menu_import
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
-    MenuCategoryAdminSerializer, MenuItemAdminSerializer,
+    MenuCategoryAdminSerializer, MenuItemAdminSerializer, TableAdminSerializer,
 )
 
 
@@ -204,6 +204,27 @@ class TableViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return Table.objects.for_current()
+
+
+class TableAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
+    """Owner/admin manage dine-in tables (add / rename / change seats / remove)."""
+    serializer_class = TableAdminSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return Table.objects.for_current().order_by("id")
+
+    def destroy(self, request, *args, **kwargs):
+        table = self.get_object()
+        has_active = (Order.objects.for_current().filter(table=table)
+                      .exclude(status__in=[Order.Status.PAID, Order.Status.CANCELLED])
+                      .exists())
+        if has_active:
+            return Response(
+                {"detail": "This table has an open order. Settle or move it before deleting."},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):

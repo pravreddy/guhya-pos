@@ -49,6 +49,14 @@ class TableSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "seats", "status", "qr_token"]
 
 
+class TableAdminSerializer(serializers.ModelSerializer):
+    """Owner/admin writable table. status is system-managed; qr_token auto."""
+    class Meta:
+        model = Table
+        fields = ["id", "name", "seats", "status"]
+        read_only_fields = ["status"]
+
+
 class OrderLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderLine

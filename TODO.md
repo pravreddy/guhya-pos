@@ -35,11 +35,17 @@ Near-term, in order:
    can tick "Generate a pickup token" (per-restaurant, per-day, resets daily);
    post-pay confirmation shows the token (or "table freed") — fixes the
    order-vanishes-with-no-feedback gap. Kitchen ticket shows the token.
-3. **WhatsApp digital bill + UPI QR** (PULLED UP — a cafe can't run a day without
-   a clean UPI flow). Bill on WhatsApp with a UPI deep-link QR: settles the bill
-   AND captures the phone number for CRM in one move (the Trojan horse). Thermal
-   receipt / KOT print alongside (Web Bluetooth / WebUSB from the PWA; expect
-   2-inch thermal formatting quirks — budget time for it).
+3. **Capture customer + WhatsApp bill + UPI QR (the CRM Trojan horse).** Phased.
+   (3a — FREE, no external accounts, build now): optional phone/name on any order
+   (dine-in + takeaway, one-tap-skippable) -> upsert tenant-scoped `Customer`
+   (start of the CRM DB); per-tenant UPI VPA setting; dynamic UPI QR at payment
+   (`upi://pay?pa=VPA&am=TOTAL&tn=ORDER`) the customer scans + pays, cashier
+   confirms (no auto-confirm without a gateway); bill sent via WhatsApp
+   click-to-chat (wa.me) link. (3b — LATER, needs accounts/cost): WhatsApp
+   Business API + approved UTILITY template for auto-send + the "customer messages
+   first -> 24h free-form window" inbound flow; payment gateway (Razorpay) for
+   true online pay + auto-reconcile. Thermal/KOT print rides alongside. Full spec
+   + constraints in the essentials section below.
 4. **Offline — Phase 1 (PULLED FORWARD, but phased).** Cache menu + tables in
    IndexedDB so the screen still loads and an order can be BUILT when wifi drops
    mid-rush, and queue pending order-writes locally. (Phase 2 = full sync +
@@ -105,6 +111,10 @@ talks to the `/api/` that's already built, using token login for access per role
       auto-refresh every 5s (polling). WebSocket push is the later upgrade.
 - [x] **4. Owner home** — role-routed landing: open orders, occupied tables.
       (Richer dashboard — sales totals, top items — later.)
+- [x] **Table management (Settings tab).** Owner/admin add / rename / change
+      seats / remove dine-in tables via a writable `tables-admin` API (a table
+      with an OPEN order can't be deleted). New owner-only **Settings** tab — will
+      also host the UPI VPA + branding settings in Phase 3a.
 
 **Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
 starter menu, links the superuser as owner, and adds cashier/kitchen logins.
@@ -136,16 +146,50 @@ at the same time — so it's a first-class mode, not an edge case:
         (is_virtual=True / id 0) so ONE code path serves both — a counter order
         is just an order on the virtual table. Keeps dine-in and takeaway uniform.
 
-- [ ] **Customer bill: WhatsApp + UPI QR first, then thermal print (PULLED UP).**
-      A cafe can't run a day without a clean way to take UPI. Lead with:
-      - **Digital bill on WhatsApp** with a **UPI deep-link QR** — the Trojan
-        horse: it settles the bill AND captures the customer's phone for CRM in
-        one move, and saves thermal-paper cost.
-      - **Thermal receipt / KOT print** for kitchens that need paper — via Web
-        Bluetooth / WebUSB from the PWA. Note: printing to a 2-inch thermal
-        printer from a browser has real formatting quirks; budget time for it.
-      Online/mobile *card* payment is LATER (point 3). First is: "here's your
-      total — pay by UPI (QR on WhatsApp) or cash at the counter."
+- [ ] **Capture customer → WhatsApp bill + UPI QR (PULLED UP; the Trojan horse).**
+      A cafe can't run a day without clean UPI, and capturing the phone at billing
+      seeds the whole CRM wedge (this IS section C's "customer database"). Two phases:
+
+      **Phase 3a — free, works today, no external accounts:**
+      - **Customer capture.** Optional phone (+ name) on any order, dine-in OR
+        takeaway. MUST be one-tap-skippable so it never slows the queue. Entering
+        a phone upserts a tenant-scoped `Customer` (phone unique per tenant) and
+        links it to the order — quietly building the customer DB (visit count /
+        total spent / last order denormalised for CRM later). Keep a CONSENT flag
+        from the start (see privacy note).
+      - **Per-tenant UPI settings.** Owner enters their UPI VPA once (e.g.
+        cafegopala@okhdfcbank) + display name ("details from the company"). Stored
+        on the tenant (alongside the future branding record).
+      - **Dynamic UPI QR at payment.** Generate `upi://pay?pa=<vpa>&pn=<name>&am=
+        <total>&tn=<order ref>&cu=INR` and render as a QR. Customer scans → amount
+        + note prefilled → pays. FREE to generate (no gateway, no fees). CAVEAT:
+        the POS can't AUTO-confirm without a gateway — cashier still taps "paid"
+        once money lands in their UPI app. Zero-cost and good enough.
+      - **WhatsApp bill via click-to-chat.** Build bill text + a
+        `https://wa.me/<phone>?text=<url-encoded bill>` link the cashier taps to
+        send. No API, no template approval, no cost. Limitation: manual tap, from
+        the cashier's own WhatsApp.
+
+      **Phase 3b — later, needs accounts / approval / cost:**
+      - **WhatsApp Business API** (BSP: Meta Cloud API / Gupshup / Twilio) to
+        AUTO-send and message at scale. KEY CONSTRAINT: you can't freely message
+        customers — business-initiated messages need a Meta-approved UTILITY
+        template (bills/receipts qualify); free-form replies only inside the 24h
+        window AFTER the customer messages you. Compliant cheap inbound pattern =
+        a "WhatsApp us / scan for your bill" QR at the table; once the CUSTOMER
+        messages first, reply freely with bill + offers. Per-message cost +
+        business verification + approval lead time. (Re-check WhatsApp pricing/
+        policy at build time — it changes.)
+      - **Payment gateway** (Razorpay / Cashfree / PhonePe PG) + webhook → true
+        pay-from-phone AND automatic reconciliation (POS knows it's paid). Fees +
+        KYC. This is "online payment later".
+
+      **Thermal receipt / KOT print** rides alongside (Web Bluetooth / WebUSB from
+      the PWA; 2-inch formatting quirks — budget time).
+
+      PRIVACY: storing a number for a transactional bill is fine; WhatsApp
+      MARKETING later needs explicit opt-in (DLT-style consent) — hence the
+      consent flag on `Customer` from day one, so the wedge stays compliant.
 
 - [ ] **Offline — Phase 1 (PULLED FORWARD).** Cache menu + tables in IndexedDB so
       the cashier screen still loads and an order can be BUILT when wifi drops
