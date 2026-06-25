@@ -174,6 +174,19 @@
     const saveAuth = (a) => localStorage.setItem(KEY, JSON.stringify(a));
     const clearAuth = () => localStorage.removeItem(KEY);
 
+    function apiErr(data, status) {
+      if (data && typeof data === 'object') {
+        if (data.detail) return data.detail;
+        const k = Object.keys(data)[0];
+        if (k) {
+          const v = data[k];
+          const msg = Array.isArray(v) ? v[0] : (typeof v === 'string' ? v : JSON.stringify(v));
+          return (k === 'non_field_errors' ? '' : (k + ': ')) + msg;
+        }
+      }
+      return 'Request failed (' + status + ')';
+    }
+
     async function api(path, { method = 'GET', body } = {}) {
       const auth = loadAuth();
       const headers = { 'Content-Type': 'application/json' };
@@ -183,7 +196,7 @@
       });
       if (res.status === 401) { clearAuth(); location.reload(); return; }
       const data = res.status === 204 ? null : await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.detail || ('Request failed (' + res.status + ')'));
+      if (!res.ok) throw new Error(apiErr(data, res.status));
       return data;
     }
 
@@ -195,7 +208,7 @@
       const res = await fetch('/api' + path, { method: 'POST', headers, body: formData });
       if (res.status === 401) { clearAuth(); location.reload(); return; }
       const data = res.status === 204 ? null : await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.detail || ('Upload failed (' + res.status + ')'));
+      if (!res.ok) throw new Error(apiErr(data, res.status));
       return data;
     }
 
@@ -299,6 +312,15 @@
         setOrder(o); refreshActive();
       };
       const clearSel = () => { setSelKind(null); setSelTable(null); setOrder(null); };
+      const freeTable = async () => {
+        if (!selTable) return;
+        const msg = order && Number(order.total) > 0
+          ? ('Table ' + selTable.name + ' has an unpaid order of ' + rupee(order.total) + '. Free it and cancel that order?')
+          : ('Free table ' + selTable.name + '?');
+        if (!confirm(msg)) return;
+        try { await api('/tables/' + selTable.id + '/free/', { method: 'POST' }); clearSel(); await loadBase(); }
+        catch (e) { alert(e.message); }
+      };
       const onPaid = async (o) => {
         if (o.status === 'paid') {
           setPay(false);
@@ -369,9 +391,13 @@
           </div>
 
           <div class="pane bill">
-            <div class="bill-head">
-              <div class="t">${billTitle}</div>
-              <div class="s">${billSub}</div>
+            <div class="bill-head" style=${{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <div style=${{ flex: 1 }}>
+                <div class="t">${billTitle}</div>
+                <div class="s">${billSub}</div>
+              </div>
+              ${selKind === 'table' && order && html`
+                <button class="btn ghost sm" onClick=${freeTable}>Free table</button>`}
             </div>
             <div class="lines">
               ${!selKind && html`<div class="empty">Pick a table or start a takeaway to begin.</div>`}
@@ -808,7 +834,7 @@
     }
 
     // ---------------- Settings (owner/admin) ----------------
-    function TableRow({ t, onSave, onDelete }) {
+    function TableRow({ t, onSave, onDelete, onFree }) {
       const [name, setName] = useState(t.name);
       const [seats, setSeats] = useState(String(t.seats));
       const dirty = name.trim() !== t.name || String(seats) !== String(t.seats);
@@ -817,30 +843,63 @@
           <input value=${name} onChange=${e => setName(e.target.value)}
             style=${{ flex: 1, padding: '8px', border: '1px solid var(--line)', borderRadius: '8px' }} />
           <input type="number" min="1" value=${seats} onChange=${e => setSeats(e.target.value)}
-            style=${{ width: '80px', padding: '8px', border: '1px solid var(--line)', borderRadius: '8px' }} />
-          <span style=${{ fontSize: '12px', color: 'var(--ink-soft)', minWidth: '64px' }}>${t.status}</span>
+            style=${{ width: '72px', padding: '8px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+          <span style=${{ fontSize: '12px', color: t.status === 'occupied' ? 'var(--warn)' : 'var(--ink-soft)', minWidth: '60px' }}>${t.status}</span>
+          ${t.status === 'occupied' && html`<button class="btn ghost sm" onClick=${() => onFree(t)}>Free</button>`}
           <button class="btn sm" disabled=${!dirty || !name.trim()}
             onClick=${() => onSave(t, { name: name.trim(), seats: Number(seats) || 1 })}>Save</button>
           <button class="btn ghost sm" onClick=${() => onDelete(t)}>Delete</button>
         </div>`;
     }
 
+    const ROLE_OPTS = [['cashier', 'Cashier'], ['waiter', 'Waiter'], ['kitchen', 'Kitchen'], ['admin', 'Admin']];
+
+    function UserRow({ u, onSave, onDelete }) {
+      const isOwner = u.role === 'owner';
+      const resetPw = () => {
+        const p = prompt('New password for ' + u.username + ' (min 4 characters):');
+        if (p == null) return;
+        if (p.trim().length < 4) { alert('Password too short.'); return; }
+        onSave(u, { password: p.trim() });
+      };
+      return html`
+        <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderBottom: '1px solid var(--line)', opacity: u.is_active ? 1 : 0.55 }}>
+          <div style=${{ flex: 1 }}>
+            <div style=${{ fontWeight: 600 }}>${u.username}</div>
+            <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>${u.is_active ? 'active' : 'disabled'}</div>
+          </div>
+          ${isOwner && html`<span style=${{ fontSize: '13px', color: 'var(--ink-soft)' }}>owner</span>`}
+          ${!isOwner && html`
+            <select value=${u.role} onChange=${e => onSave(u, { role: e.target.value })}
+              style=${{ padding: '7px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)', fontSize: '13px' }}>
+              ${ROLE_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+            </select>
+            <button class="btn ghost sm" onClick=${() => onSave(u, { is_active: !u.is_active })}>${u.is_active ? 'Disable' : 'Enable'}</button>
+            <button class="btn ghost sm" onClick=${resetPw}>Reset pw</button>
+            <button class="btn ghost sm" onClick=${() => onDelete(u)}>Delete</button>`}
+        </div>`;
+    }
+
     function Settings() {
       const [tables, setTables] = useState([]);
+      const [users, setUsers] = useState([]);
       const [loading, setLoading] = useState(true);
-      const [name, setName] = useState(''); const [seats, setSeats] = useState('4');
+      const [tName, setTName] = useState(''); const [tSeats, setTSeats] = useState('4');
+      const [uName, setUName] = useState(''); const [uPass, setUPass] = useState(''); const [uRole, setURole] = useState('cashier');
 
       const load = useCallback(async () => {
         setLoading(true);
-        try { setTables(await api('/tables-admin/') || []); }
-        catch (e) { alert(e.message); } finally { setLoading(false); }
+        try {
+          const [t, u] = await Promise.all([api('/tables-admin/'), api('/users-admin/')]);
+          setTables(t || []); setUsers(u || []);
+        } catch (e) { alert(e.message); } finally { setLoading(false); }
       }, []);
       useEffect(() => { load(); }, [load]);
 
       const addTable = async () => {
-        const nm = name.trim(); if (!nm) return;
-        try { await api('/tables-admin/', { method: 'POST', body: { name: nm, seats: Number(seats) || 1 } });
-          setName(''); setSeats('4'); load(); }
+        const nm = tName.trim(); if (!nm) return;
+        try { await api('/tables-admin/', { method: 'POST', body: { name: nm, seats: Number(tSeats) || 1 } });
+          setTName(''); setTSeats('4'); load(); }
         catch (e) { alert(e.message); }
       };
       const saveTable = async (t, patch) => {
@@ -852,30 +911,71 @@
         try { await api('/tables-admin/' + t.id + '/', { method: 'DELETE' }); load(); }
         catch (e) { alert(e.message); }
       };
+      const freeTableRow = async (t) => {
+        if (!confirm('Free table "' + t.name + '"? Any open order on it will be cancelled.')) return;
+        try { await api('/tables/' + t.id + '/free/', { method: 'POST' }); load(); }
+        catch (e) { alert(e.message); }
+      };
+
+      const addUser = async () => {
+        const nm = uName.trim(); if (!nm || !uPass) return;
+        try { await api('/users-admin/', { method: 'POST', body: { username: nm, password: uPass, role: uRole } });
+          setUName(''); setUPass(''); setURole('cashier'); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const saveUser = async (u, patch) => {
+        try { await api('/users-admin/' + u.id + '/', { method: 'PATCH', body: patch }); load(); }
+        catch (e) { alert(e.message); }
+      };
+      const deleteUser = async (u) => {
+        if (!confirm('Remove user "' + u.username + '"?')) return;
+        try { await api('/users-admin/' + u.id + '/', { method: 'DELETE' }); load(); }
+        catch (e) { alert(e.message); }
+      };
 
       if (loading) return html`<div class="center-msg">Loading…</div>`;
+      const cardStyle = { background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginBottom: '16px' };
+      const headStyle = { display: 'flex', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--line)' };
+      const inp = { padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' };
       return html`
-        <div style=${{ padding: '18px', maxWidth: '720px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+        <div style=${{ padding: '18px', maxWidth: '760px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
           <h2 style=${{ marginTop: 0 }}>Settings</h2>
-          <div style=${{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-            <div style=${{ display: 'flex', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--line)' }}>
+
+          <div style=${cardStyle}>
+            <div style=${headStyle}>
               <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Dine-in tables</b>
               <span style=${{ color: 'var(--ink-soft)', fontSize: '13px' }}>${tables.length} table${tables.length === 1 ? '' : 's'}</span>
             </div>
             ${tables.length === 0 && html`<div style=${{ padding: '12px 14px', color: 'var(--ink-soft)', fontSize: '14px' }}>No tables yet. Add one below.</div>`}
-            ${tables.map(t => html`<${TableRow} key=${t.id} t=${t} onSave=${saveTable} onDelete=${deleteTable} />`)}
+            ${tables.map(t => html`<${TableRow} key=${t.id} t=${t} onSave=${saveTable} onDelete=${deleteTable} onFree=${freeTableRow} />`)}
             <div style=${{ display: 'flex', gap: '8px', padding: '12px 14px', alignItems: 'center' }}>
-              <input placeholder="Table name (e.g. T7)" value=${name} onChange=${e => setName(e.target.value)}
-                onKeyDown=${e => e.key === 'Enter' && addTable()}
-                style=${{ flex: 1, padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
-              <input type="number" min="1" placeholder="Seats" value=${seats} onChange=${e => setSeats(e.target.value)}
-                style=${{ width: '90px', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
+              <input placeholder="Table name (e.g. T7)" value=${tName} onChange=${e => setTName(e.target.value)}
+                onKeyDown=${e => e.key === 'Enter' && addTable()} style=${{ ...inp, flex: 1 }} />
+              <input type="number" min="1" placeholder="Seats" value=${tSeats} onChange=${e => setTSeats(e.target.value)} style=${{ ...inp, width: '90px' }} />
               <button class="btn sm" onClick=${addTable}>Add table</button>
             </div>
           </div>
-          <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: '12px' }}>
-            A table with an open order can't be deleted — settle or move that order first.
-            (Payment &amp; branding settings will live here too.)</p>
+
+          <div style=${cardStyle}>
+            <div style=${headStyle}>
+              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Staff &amp; logins</b>
+              <span style=${{ color: 'var(--ink-soft)', fontSize: '13px' }}>${users.length} user${users.length === 1 ? '' : 's'}</span>
+            </div>
+            ${users.map(u => html`<${UserRow} key=${u.id} u=${u} onSave=${saveUser} onDelete=${deleteUser} />`)}
+            <div style=${{ display: 'flex', gap: '8px', padding: '12px 14px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input placeholder="Username" value=${uName} onChange=${e => setUName(e.target.value)} style=${{ ...inp, flex: 1, minWidth: '120px' }} />
+              <input type="password" placeholder="Password" value=${uPass} onChange=${e => setUPass(e.target.value)} style=${{ ...inp, width: '150px' }} />
+              <select value=${uRole} onChange=${e => setURole(e.target.value)} style=${{ ...inp, background: 'var(--surface)' }}>
+                ${ROLE_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+              </select>
+              <button class="btn sm" onClick=${addUser}>Add user</button>
+            </div>
+          </div>
+
+          <p style=${{ color: 'var(--ink-soft)', fontSize: '13px' }}>
+            A table with an open order can't be deleted — settle it, or use Free to clear a stuck one.
+            Cashiers &amp; waiters can take orders &amp; payment; kitchen sees the KDS only. Usernames must be
+            unique. (UPI &amp; branding settings will live here too.)</p>
         </div>`;
     }
 

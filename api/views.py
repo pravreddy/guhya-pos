@@ -23,6 +23,7 @@ from . import menu_import
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
     MenuCategoryAdminSerializer, MenuItemAdminSerializer, TableAdminSerializer,
+    UserAdminSerializer,
 )
 
 
@@ -205,6 +206,20 @@ class TableViewSet(TenantViewMixin, viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return Table.objects.for_current()
 
+    @action(detail=True, methods=["post"])
+    def free(self, request, pk=None):
+        """Clear a table: cancel any open (unpaid) order on it and mark it free.
+        Cashier/owner override for a stuck or abandoned table."""
+        table = self.get_object()
+        active = (Order.objects.for_current().filter(table=table)
+                  .exclude(status__in=[Order.Status.PAID, Order.Status.CANCELLED]))
+        for o in active:
+            o.status = Order.Status.CANCELLED
+            o.save(update_fields=["status", "updated_at"])
+        table.status = Table.Status.FREE
+        table.save(update_fields=["status"])
+        return Response(TableSerializer(table).data)
+
 
 class TableAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
     """Owner/admin manage dine-in tables (add / rename / change seats / remove)."""
@@ -224,6 +239,32 @@ class TableAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
                 {"detail": "This table has an open order. Settle or move it before deleting."},
                 status=400,
             )
+        return super().destroy(request, *args, **kwargs)
+
+
+class UserAdminViewSet(TenantViewMixin, viewsets.ModelViewSet):
+    """Owner/admin manage staff logins for THIS restaurant (cashiers, waiters,
+    kitchen, admins). The owner account itself can't be edited/removed here."""
+    serializer_class = UserAdminSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return User.objects.filter(tenant=self.request.user.tenant).order_by("id")
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)
+
+    def update(self, request, *args, **kwargs):
+        if self.get_object().role == User.Role.OWNER:
+            return Response({"detail": "The owner account can't be changed here."}, status=400)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        u = self.get_object()
+        if u.role == User.Role.OWNER:
+            return Response({"detail": "The owner account can't be deleted."}, status=400)
+        if u.id == request.user.id:
+            return Response({"detail": "You can't delete your own account."}, status=400)
         return super().destroy(request, *args, **kwargs)
 
 

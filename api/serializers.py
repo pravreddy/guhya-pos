@@ -1,5 +1,6 @@
 from decimal import Decimal
 from rest_framework import serializers
+from accounts.models import User
 from catalog.models import MenuCategory, MenuItem
 from orders.models import Table, Order, OrderLine, Payment
 
@@ -55,6 +56,39 @@ class TableAdminSerializer(serializers.ModelSerializer):
         model = Table
         fields = ["id", "name", "seats", "status"]
         read_only_fields = ["status"]
+
+
+class UserAdminSerializer(serializers.ModelSerializer):
+    """Owner/admin manage staff logins for their restaurant. Password is
+    write-only; required on create, optional on update (reset)."""
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "role", "is_active", "password"]
+
+    def validate_role(self, value):
+        if value == User.Role.OWNER:
+            raise serializers.ValidationError("You can't create another owner here.")
+        return value
+
+    def create(self, validated_data):
+        pwd = (validated_data.pop("password", "") or "").strip()
+        if not pwd:
+            raise serializers.ValidationError({"password": "Password is required for a new user."})
+        user = User(**validated_data)   # tenant comes from serializer.save(tenant=...)
+        user.set_password(pwd)
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        pwd = validated_data.pop("password", None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        if pwd:
+            instance.set_password(pwd)
+        instance.save()
+        return instance
 
 
 class OrderLineSerializer(serializers.ModelSerializer):

@@ -8,6 +8,7 @@ router.register("menu-categories", views.MenuCategoryAdminViewSet, basename="men
 router.register("menu-items", views.MenuItemAdminViewSet, basename="menu-items")
 router.register("tables", views.TableViewSet, basename="tables")
 router.register("tables-admin", views.TableAdminViewSet, basename="tables-admin")
+router.register("users-admin", views.UserAdminViewSet, basename="users-admin")
 router.register("orders", views.OrderViewSet, basename="orders")
 
 urlpatterns = [

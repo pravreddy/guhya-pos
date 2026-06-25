@@ -115,6 +115,15 @@ talks to the `/api/` that's already built, using token login for access per role
       seats / remove dine-in tables via a writable `tables-admin` API (a table
       with an OPEN order can't be deleted). New owner-only **Settings** tab — will
       also host the UPI VPA + branding settings in Phase 3a.
+- [x] **Free table override + staff management (Settings tab).** "Free table"
+      action (cashier on the bill, owner in Settings) cancels any open order on a
+      table and frees it — for stuck/abandoned tables (a table stays occupied
+      while it has an unpaid or partially-paid order; that's correct, this is the
+      manual clear). Staff & logins: owner/admin add users (cashier / waiter /
+      kitchen / admin), reset password, enable/disable, delete — via `users-admin`
+      API (owner account protected; usernames globally unique). NOTE: this adds
+      user *accounts*; per-role endpoint ENFORCEMENT is still #5 (right now any
+      tenant user can hit cashier endpoints).
 
 **Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
 starter menu, links the superuser as owner, and adds cashier/kitchen logins.
