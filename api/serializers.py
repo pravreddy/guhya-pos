@@ -1,6 +1,7 @@
 from decimal import Decimal
 from rest_framework import serializers
-from accounts.models import User
+from tenancy.models import Tenant
+from accounts.models import User, Attendance
 from catalog.models import MenuCategory, MenuItem
 from orders.models import Table, Order, OrderLine, Payment
 
@@ -65,7 +66,8 @@ class UserAdminSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "role", "is_active", "password"]
+        fields = ["id", "username", "role", "is_active", "password",
+                  "wage_type", "wage_rate", "attendance_pin"]
 
     def validate_role(self, value):
         if value == User.Role.OWNER:
@@ -89,6 +91,28 @@ class UserAdminSerializer(serializers.ModelSerializer):
             instance.set_password(pwd)
         instance.save()
         return instance
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.username", read_only=True)
+    hours = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Attendance
+        fields = ["id", "employee", "employee_name", "clock_in", "clock_out",
+                  "hours", "source"]
+
+    def get_hours(self, obj):
+        return obj.hours
+
+
+class TenantSettingsSerializer(serializers.ModelSerializer):
+    """Per-restaurant settings the owner configures (UPI for now; branding etc.
+    later). Readable by any tenant user so the cashier can build the UPI QR."""
+    class Meta:
+        model = Tenant
+        fields = ["id", "name", "upi_vpa", "upi_payee_name"]
+        read_only_fields = ["id"]
 
 
 class OrderLineSerializer(serializers.ModelSerializer):

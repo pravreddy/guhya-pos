@@ -163,6 +163,7 @@
 
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
   <script type="module">
     import htm from 'https://unpkg.com/htm?module';
     const html = htm.bind(React.createElement);
@@ -230,6 +231,23 @@
     const rupee = (n) => '₹' + Number(n || 0).toFixed(2);
     const FOOD = { veg: 'veg', nonveg: 'nonveg', egg: 'egg' };
 
+    // Build a UPI deep link + QR (data URL) for scan-to-pay. Returns null on
+    // error or if the qrcode lib didn't load.
+    const upiQrDataUrl = (vpa, name, amount, note) => {
+      try {
+        if (typeof qrcode === 'undefined' || !vpa) return null;
+        const amt = Number(amount);
+        const am = isFinite(amt) && amt > 0 ? amt.toFixed(2) : '';
+        let uri = 'upi://pay?pa=' + encodeURIComponent(vpa);
+        if (name) uri += '&pn=' + encodeURIComponent(name);
+        if (am) uri += '&am=' + am;
+        uri += '&cu=INR';
+        if (note) uri += '&tn=' + encodeURIComponent(note);
+        const qr = qrcode(0, 'M'); qr.addData(uri); qr.make();
+        return { url: qr.createDataURL(6, 8), uri };
+      } catch (e) { return null; }
+    };
+
     // ---------------- Login ----------------
     function Login({ onLogin }) {
       const [u, setU] = useState(''); const [p, setP] = useState('');
@@ -270,12 +288,13 @@
       const [selTable, setSelTable] = useState(null); // table object when selKind==='table'
       const [pay, setPay] = useState(false);
       const [payResult, setPayResult] = useState(null);
+      const [tenantInfo, setTenantInfo] = useState(null);
       const [q, setQ] = useState('');
       const [activeCat, setActiveCat] = useState('all');
 
       const loadBase = useCallback(async () => {
-        const [t, m, a] = await Promise.all([api('/tables/'), api('/menu/'), api('/orders/?status=active')]);
-        setTables(t || []); setMenu(m || []); setActive(a || []);
+        const [t, m, a, ti] = await Promise.all([api('/tables/'), api('/menu/'), api('/orders/?status=active'), api('/tenant/').catch(() => null)]);
+        setTables(t || []); setMenu(m || []); setActive(a || []); if (ti) setTenantInfo(ti);
       }, []);
       useEffect(() => { loadBase(); }, [loadBase]);
       const refreshActive = async () => { try { setActive(await api('/orders/?status=active') || []); } catch {} };
@@ -439,12 +458,12 @@
               </div>`}
           </div>
 
-          ${pay && html`<${PayModal} order=${order} onClose=${() => setPay(false)} onPaid=${onPaid} />`}
+          ${pay && html`<${PayModal} order=${order} tenant=${tenantInfo} onClose=${() => setPay(false)} onPaid=${onPaid} />`}
           ${payResult && html`<${PostPayModal} result=${payResult} onClose=${() => setPayResult(null)} />`}
         </div>`;
     }
 
-    function PayModal({ order, onClose, onPaid }) {
+    function PayModal({ order, tenant, onClose, onPaid }) {
       const isTakeaway = order.service_mode === 'takeaway';
       const [method, setMethod] = useState('cash');
       const [amount, setAmount] = useState(Number(order.balance).toFixed(2));
@@ -468,6 +487,19 @@
             </div>
             <div class="field"><label>Amount (partial allowed for split)</label>
               <input value=${amount} onChange=${e => setAmount(e.target.value)} /></div>
+            ${method === 'upi' && (tenant && tenant.upi_vpa
+              ? (() => {
+                  const qr = upiQrDataUrl(tenant.upi_vpa, tenant.upi_payee_name, amount, 'Order ' + order.id);
+                  return qr ? html`
+                    <div style=${{ textAlign: 'center', padding: '4px 0 10px' }}>
+                      <img src=${qr.url} alt="UPI QR" style=${{ width: '176px', height: '176px' }} />
+                      <div style=${{ fontSize: '13px', color: 'var(--ink)', marginTop: '4px' }}>Scan to pay ${rupee(amount)}</div>
+                      <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>${tenant.upi_payee_name ? tenant.upi_payee_name + ' · ' : ''}${tenant.upi_vpa}</div>
+                      <div style=${{ fontSize: '12px', color: 'var(--warn)', marginTop: '3px' }}>Confirm below once the money is received.</div>
+                    </div>` : '';
+                })()
+              : html`<div style=${{ fontSize: '13px', color: 'var(--ink-soft)', padding: '4px 0 10px' }}>
+                  Add your UPI ID in Settings → Payments to show a scan-to-pay QR here.</div>`)}
             ${isTakeaway && !order.token && html`
               <label style=${{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0 12px', fontSize: '14px' }}>
                 <input type="checkbox" checked=${makeToken} onChange=${e => setMakeToken(e.target.checked)} />
@@ -897,30 +929,52 @@
     }
 
     const ROLE_OPTS = [['cashier', 'Cashier'], ['waiter', 'Waiter'], ['kitchen', 'Kitchen'], ['admin', 'Admin']];
+    const WAGE_OPTS = [['monthly', 'Monthly'], ['daily', 'Daily'], ['hourly', 'Hourly']];
 
     function UserRow({ u, onSave, onDelete }) {
       const isOwner = u.role === 'owner';
+      const [payOpen, setPayOpen] = useState(false);
+      const [wt, setWt] = useState(u.wage_type || 'monthly');
+      const [wr, setWr] = useState(u.wage_rate != null ? String(u.wage_rate) : '0');
+      const [pin, setPin] = useState(u.attendance_pin || '');
       const resetPw = () => {
         const p = prompt('New password for ' + u.username + ' (min 4 characters):');
         if (p == null) return;
         if (p.trim().length < 4) { alert('Password too short.'); return; }
         onSave(u, { password: p.trim() });
       };
+      const savePay = () => { onSave(u, { wage_type: wt, wage_rate: wr === '' ? 0 : wr, attendance_pin: pin.trim() }); setPayOpen(false); };
+      const inp = { padding: '7px', border: '1px solid var(--line)', borderRadius: '8px' };
       return html`
-        <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderBottom: '1px solid var(--line)', opacity: u.is_active ? 1 : 0.55 }}>
-          <div style=${{ flex: 1 }}>
-            <div style=${{ fontWeight: 600 }}>${u.username}</div>
-            <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>${u.is_active ? 'active' : 'disabled'}</div>
+        <div style=${{ borderBottom: '1px solid var(--line)', opacity: u.is_active ? 1 : 0.55 }}>
+          <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px' }}>
+            <div style=${{ flex: 1 }}>
+              <div style=${{ fontWeight: 600 }}>${u.username}</div>
+              <div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>${u.is_active ? 'active' : 'disabled'}${!isOwner && u.attendance_pin ? ' · PIN set' : ''}</div>
+            </div>
+            ${isOwner && html`<span style=${{ fontSize: '13px', color: 'var(--ink-soft)' }}>owner</span>`}
+            ${!isOwner && html`
+              <select value=${u.role} onChange=${e => onSave(u, { role: e.target.value })}
+                style=${{ ...inp, background: 'var(--surface)', fontSize: '13px' }}>
+                ${ROLE_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+              </select>
+              <button class="btn ghost sm" onClick=${() => setPayOpen(o => !o)}>Pay/PIN</button>
+              <button class="btn ghost sm" onClick=${() => onSave(u, { is_active: !u.is_active })}>${u.is_active ? 'Disable' : 'Enable'}</button>
+              <button class="btn ghost sm" onClick=${resetPw}>Reset pw</button>
+              <button class="btn ghost sm" onClick=${() => onDelete(u)}>Delete</button>`}
           </div>
-          ${isOwner && html`<span style=${{ fontSize: '13px', color: 'var(--ink-soft)' }}>owner</span>`}
-          ${!isOwner && html`
-            <select value=${u.role} onChange=${e => onSave(u, { role: e.target.value })}
-              style=${{ padding: '7px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)', fontSize: '13px' }}>
-              ${ROLE_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
-            </select>
-            <button class="btn ghost sm" onClick=${() => onSave(u, { is_active: !u.is_active })}>${u.is_active ? 'Disable' : 'Enable'}</button>
-            <button class="btn ghost sm" onClick=${resetPw}>Reset pw</button>
-            <button class="btn ghost sm" onClick=${() => onDelete(u)}>Delete</button>`}
+          ${!isOwner && payOpen && html`
+            <div style=${{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', padding: '0 14px 12px' }}>
+              <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>Wage type<br/>
+                <select value=${wt} onChange=${e => setWt(e.target.value)} style=${{ ...inp, background: 'var(--surface)' }}>
+                  ${WAGE_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+                </select></label>
+              <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>Rate ₹ ${wt === 'hourly' ? '/hr' : wt === 'daily' ? '/day' : '/month'}<br/>
+                <input value=${wr} inputmode="decimal" onChange=${e => setWr(e.target.value)} style=${{ ...inp, width: '110px' }} /></label>
+              <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>Clock-in PIN<br/>
+                <input value=${pin} inputmode="numeric" maxlength="6" placeholder="e.g. 1234" onChange=${e => setPin(e.target.value)} style=${{ ...inp, width: '100px' }} /></label>
+              <button class="btn sm" onClick=${savePay}>Save pay</button>
+            </div>`}
         </div>`;
     }
 
@@ -930,12 +984,14 @@
       const [loading, setLoading] = useState(true);
       const [tName, setTName] = useState(''); const [tSeats, setTSeats] = useState('4');
       const [uName, setUName] = useState(''); const [uPass, setUPass] = useState(''); const [uRole, setURole] = useState('cashier');
+      const [vpa, setVpa] = useState(''); const [payee, setPayee] = useState('');
 
       const load = useCallback(async () => {
         setLoading(true);
         try {
-          const [t, u] = await Promise.all([api('/tables-admin/'), api('/users-admin/')]);
+          const [t, u, ti] = await Promise.all([api('/tables-admin/'), api('/users-admin/'), api('/tenant/')]);
           setTables(t || []); setUsers(u || []);
+          if (ti) { setVpa(ti.upi_vpa || ''); setPayee(ti.upi_payee_name || ''); }
         } catch (e) { alert(e.message); } finally { setLoading(false); }
       }, []);
       useEffect(() => { load(); }, [load]);
@@ -976,6 +1032,10 @@
         try { await api('/users-admin/' + u.id + '/', { method: 'DELETE' }); load(); }
         catch (e) { alert(e.message); }
       };
+      const savePayments = async () => {
+        try { await api('/tenant/', { method: 'PATCH', body: { upi_vpa: vpa.trim(), upi_payee_name: payee.trim() } }); alert('Payment settings saved.'); }
+        catch (e) { alert(e.message); }
+      };
 
       if (loading) return html`<div class="center-msg">Loading…</div>`;
       const cardStyle = { background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginBottom: '16px' };
@@ -984,6 +1044,23 @@
       return html`
         <div style=${{ padding: '18px', maxWidth: '760px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
           <h2 style=${{ marginTop: 0 }}>Settings</h2>
+
+          <div style=${cardStyle}>
+            <div style=${headStyle}>
+              <b style=${{ flex: 1, color: 'var(--brand-dark)', fontSize: '15px' }}>Payments · UPI</b>
+            </div>
+            <div style=${{ padding: '14px' }}>
+              <p style=${{ margin: '0 0 12px', color: 'var(--ink-soft)', fontSize: '13px' }}>
+                Enter your UPI ID — a scan-to-pay QR then shows on the pay screen automatically. The customer scans and pays; you tap Confirm once the money lands (no fees, no gateway).</p>
+              <div style=${{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <label style=${{ fontSize: '12px', color: 'var(--ink-soft)', flex: 1, minWidth: '210px' }}>UPI ID (VPA)<br/>
+                  <input placeholder="e.g. cafegopala@okhdfcbank" value=${vpa} onChange=${e => setVpa(e.target.value)} style=${{ ...inp, width: '100%' }} /></label>
+                <label style=${{ fontSize: '12px', color: 'var(--ink-soft)', flex: 1, minWidth: '170px' }}>Payee name shown<br/>
+                  <input placeholder="e.g. Cafe Gopala" value=${payee} onChange=${e => setPayee(e.target.value)} style=${{ ...inp, width: '100%' }} /></label>
+                <button class="btn sm" onClick=${savePayments}>Save</button>
+              </div>
+            </div>
+          </div>
 
           <div style=${cardStyle}>
             <div style=${headStyle}>
@@ -1023,11 +1100,144 @@
         </div>`;
     }
 
+    // ---------------- Attendance & payroll ----------------
+    const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+    const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    const monthStartStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01'; };
+
+    function PinModal({ emp, onClose, onPunch }) {
+      const [pin, setPin] = useState('');
+      const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+      const go = async () => {
+        setErr(''); setBusy(true);
+        try { await onPunch(emp, pin); } catch (e) { setErr(e.message); setBusy(false); }
+      };
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '300px' }}>
+            <h3 style=${{ margin: '0 0 4px' }}>${emp.clocked_in ? 'Clock out' : 'Clock in'}</h3>
+            <p style=${{ color: 'var(--ink-soft)', fontSize: '14px', margin: '0 0 14px' }}>${emp.username}</p>
+            ${err && html`<div class="err">${err}</div>`}
+            <input type="password" inputmode="numeric" placeholder="PIN" value=${pin} autoFocus
+              onChange=${e => setPin(e.target.value)} onKeyDown=${e => e.key === 'Enter' && pin && go()}
+              style=${{ width: '100%', padding: '12px', border: '1px solid var(--line)', borderRadius: '10px', textAlign: 'center', fontSize: '22px', letterSpacing: '6px' }} />
+            <div style=${{ display: 'flex', gap: '8px', marginTop: '14px' }}>
+              <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
+              <button class="btn accent" style=${{ flex: 2 }} disabled=${busy || !pin} onClick=${go}>
+                ${busy ? '…' : (emp.clocked_in ? 'Clock out' : 'Clock in')}</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function Attendance({ auth }) {
+      const isManager = auth.role === 'owner' || auth.role === 'admin';
+      const [view, setView] = useState('clock');
+      const [emps, setEmps] = useState([]);
+      const [pinFor, setPinFor] = useState(null);
+      const [toast, setToast] = useState('');
+
+      const loadEmps = useCallback(async () => {
+        try { setEmps(await api('/attendance/employees/') || []); } catch (e) { /* keep last */ }
+      }, []);
+      useEffect(() => { loadEmps(); const t = setInterval(loadEmps, 20000); return () => clearInterval(t); }, [loadEmps]);
+
+      const punch = async (emp, pin) => {
+        const r = await api('/attendance/punch/', { method: 'POST', body: { employee_id: emp.id, pin } });
+        setPinFor(null);
+        const rec = r.record || {};
+        const t = r.action === 'in' ? rec.clock_in : rec.clock_out;
+        setToast((r.action === 'in' ? 'Clocked in' : 'Clocked out') + (t ? ' at ' + fmtTime(t) : ''));
+        setTimeout(() => setToast(''), 2600);
+        loadEmps();
+      };
+
+      return html`
+        <div style=${{ padding: '18px', maxWidth: '860px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+          <div style=${{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <h2 style=${{ margin: 0, flex: 1 }}>Attendance</h2>
+            ${isManager && html`
+              <div class="cat-tabs" style=${{ overflow: 'visible' }}>
+                <button class=${'chip ' + (view === 'clock' ? 'on' : '')} onClick=${() => setView('clock')}>Clock</button>
+                <button class=${'chip ' + (view === 'payroll' ? 'on' : '')} onClick=${() => setView('payroll')}>Payroll</button>
+              </div>`}
+          </div>
+
+          ${view === 'clock' && html`
+            <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>
+              Tap your name and enter your PIN to clock in or out. The time is recorded by the system, not typed in.</p>
+            ${emps.length === 0 && html`<div class="empty">No staff yet. Add staff in Settings and set a PIN for each (Pay/PIN button).</div>`}
+            <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '10px' }}>
+              ${emps.map(e => html`
+                <button key=${e.id} onClick=${() => e.has_pin ? setPinFor(e) : alert('No PIN set for ' + e.username + '. Set one in Settings → Pay/PIN.')}
+                  style=${{ textAlign: 'left', padding: '14px', borderRadius: '12px', border: '1px solid ' + (e.clocked_in ? 'var(--ok)' : 'var(--line)'), background: e.clocked_in ? '#e9f6f0' : 'var(--surface)' }}>
+                  <div style=${{ fontWeight: 700, fontSize: '15px' }}>${e.username}</div>
+                  <div style=${{ fontSize: '12px', color: 'var(--ink-soft)', textTransform: 'capitalize' }}>${e.role}${e.has_pin ? '' : ' · no PIN'}</div>
+                  <div style=${{ marginTop: '8px', fontSize: '13px', fontWeight: 700, color: e.clocked_in ? 'var(--ok)' : 'var(--ink-soft)' }}>
+                    ${e.clocked_in ? '● In — tap to clock out' : '○ Out — tap to clock in'}</div>
+                </button>`)}
+            </div>`}
+
+          ${view === 'payroll' && isManager && html`<${Payroll} />`}
+
+          ${pinFor && html`<${PinModal} emp=${pinFor} onClose=${() => setPinFor(null)} onPunch=${punch} />`}
+          ${toast && html`<div style=${{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'var(--ink)', color: '#fff', padding: '12px 20px', borderRadius: '10px', fontWeight: 600, zIndex: 60 }}>${toast}</div>`}
+        </div>`;
+    }
+
+    function Payroll() {
+      const [from, setFrom] = useState(monthStartStr());
+      const [to, setTo] = useState(todayStr());
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const load = async () => {
+        setLoading(true);
+        try { setData(await api('/attendance/summary/?from=' + from + '&to=' + to)); }
+        catch (e) { alert(e.message); } finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+      const rows = data ? data.rows : [];
+      const totalPay = rows.reduce((s, r) => s + Number(r.pay || 0), 0);
+      const inp = { padding: '8px 10px', border: '1px solid var(--line)', borderRadius: '8px' };
+      return html`
+        <div>
+          <div style=${{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>From<br/>
+              <input type="date" value=${from} onChange=${e => setFrom(e.target.value)} style=${inp} /></label>
+            <label style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>To<br/>
+              <input type="date" value=${to} onChange=${e => setTo(e.target.value)} style=${inp} /></label>
+            <button class="btn sm" onClick=${load}>${loading ? 'Loading…' : 'Calculate'}</button>
+          </div>
+          ${rows.length === 0 && html`<div class="empty">No completed attendance in this range.</div>`}
+          ${rows.length > 0 && html`
+            <div style=${{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+              <div style=${{ display: 'flex', padding: '10px 14px', borderBottom: '1px solid var(--line)', fontSize: '12px', color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '.03em' }}>
+                <span style=${{ flex: 2 }}>Staff</span><span style=${{ flex: 1 }}>Rate</span><span style=${{ width: '64px', textAlign: 'right' }}>Hours</span><span style=${{ width: '52px', textAlign: 'right' }}>Days</span><span style=${{ width: '90px', textAlign: 'right' }}>Pay</span>
+              </div>
+              ${rows.map(r => html`
+                <div key=${r.employee} style=${{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+                  <span style=${{ flex: 2, fontWeight: 600 }}>${r.username}</span>
+                  <span style=${{ flex: 1, fontSize: '13px', color: 'var(--ink-soft)', textTransform: 'capitalize' }}>${r.wage_type} · ${rupee(r.wage_rate)}</span>
+                  <span style=${{ width: '64px', textAlign: 'right' }}>${Number(r.hours).toFixed(1)}</span>
+                  <span style=${{ width: '52px', textAlign: 'right' }}>${r.days}</span>
+                  <span style=${{ width: '90px', textAlign: 'right', fontWeight: 700 }}>${rupee(r.pay)}</span>
+                </div>`)}
+              <div style=${{ display: 'flex', padding: '12px 14px', fontWeight: 800 }}>
+                <span style=${{ flex: 1 }}>Total</span><span>${rupee(totalPay)}</span>
+              </div>
+            </div>
+            <p style=${{ color: 'var(--ink-soft)', fontSize: '12px', marginTop: '10px' }}>
+              Hourly = hours × rate · Daily = days present × rate · Monthly = fixed salary (shown as-is).
+              Only completed (clocked-out) sessions count toward hours. Set each person's wage in Settings → Pay/PIN.</p>`}
+        </div>`;
+    }
+
     // ---------------- Shell + routing ----------------
     const TABS = {
       cashier:  { label: 'Cashier',  comp: Cashier, roles: ['owner', 'admin', 'cashier', 'waiter'] },
       kitchen:  { label: 'Kitchen',  comp: Kitchen, roles: ['owner', 'admin', 'kitchen'] },
       menu:     { label: 'Menu',     comp: MenuManager, roles: ['owner', 'admin'] },
+      attendance: { label: 'Attendance', comp: Attendance, roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
       settings: { label: 'Settings', comp: Settings, roles: ['owner', 'admin'] },
       home:     { label: 'Home',     comp: Home,    roles: ['owner', 'admin', 'cashier', 'kitchen', 'waiter'] },
     };

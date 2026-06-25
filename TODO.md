@@ -124,6 +124,56 @@ talks to the `/api/` that's already built, using token login for access per role
       API (owner account protected; usernames globally unique). NOTE: this adds
       user *accounts*; per-role endpoint ENFORCEMENT is still #5 (right now any
       tenant user can hit cashier endpoints).
+- [x] **Staff attendance + payroll (Attendance tab).** PIN-based clock-in/out
+      with SERVER-stamped times — kills arrival-time fudging (staff can't type a
+      fake time). Per-staff wage (monthly / daily / hourly) + clock-in PIN set in
+      Settings → Pay/PIN. Payroll view (owner/admin) totals hours, days present,
+      and pay per person for a date range. Pay rules v1: hourly = hours×rate,
+      daily = days×rate, monthly = fixed. LATER: biometric fingerprint device
+      pushing punches into the SAME Attendance table (a website can't read a
+      thumb scanner directly — needs an ESSL/ZKTeco-style device that POSTs to
+      our punch endpoint, or a native app); overtime / half-day / late-mark /
+      absent-deduction rules; lock & approve a pay period; payslip / register
+      export; selfie-at-punch for anti-buddy-punching.
+- [x] **Phase 3a — configurable UPI QR at payment (DONE).** Per-tenant UPI VPA +
+      payee name set by the owner in Settings → Payments (stored on Tenant, NOT
+      hardcoded). Pay screen: pick UPI → a dynamic QR (`upi://pay?pa&pn&am&cu=INR
+      &tn`) renders for the exact amount; customer scans & pays; cashier taps
+      Confirm (no gateway/fees; can't auto-confirm — that's Phase 3b Razorpay).
+      QR rendered client-side (qrcode-generator via CDN). `GET /tenant/` is
+      readable by any tenant user (cashier needs the VPA); PATCH owner/admin only.
+      NEXT in 3a: wa.me WhatsApp bill link.
+- [ ] **Attendance — biometric device integration (Cafe Gopala already OWNS the
+      hardware).** They have a Petpooja payroll/attendance biometric marker
+      (Bluetooth/WiFi) — refs: posmarket.in petpooja-payroll-attendance device +
+      the Petpooja attendance YouTube demo. GOAL: feed its fingerprint punches
+      straight into our `Attendance` table (no PINs once it works). REALITY CHECK
+      / it depends entirely on the exact model — these are usually rebranded
+      ESSL / ZKTeco / Mantra units:
+        • If it's a WiFi/LAN unit that speaks the ADMS / iclock PUSH protocol with
+          a CONFIGURABLE server URL → point it at our own ingest endpoint and
+          punches flow in. Very doable. (Build: a device adapter endpoint that
+          maps the device's user-id → our User and writes Attendance rows; the
+          owner maps each device-id to a staff member once.)
+        • If it ONLY pairs over Bluetooth to Petpooja's own app, or its firmware is
+          LOCKED to Petpooja's cloud → we can't read it; owner needs a generic
+          ESSL/ZKTeco WiFi device (cheap, ~₹3–5k) that allows a custom server.
+      ACTION: get the exact device model/brand (photo of the back label) to pick
+      the path. Meanwhile the PIN clock-in already gives anti-cheat attendance
+      today. PAYROLL CALCULATION stays a LATER add-on — capture first; the v1
+      hours/days/pay summary already shipped, refine the rules later.
+      USB-FINGERPRINT OPTION (cheapest hardware, India): a Mantra MFS100 (~₹2k) /
+      SecuGen Hamster Pro / Morpho MSO is the lowest-cost scanner — BUT a browser
+      can't talk to it directly; these need the vendor RD-Service/SDK (a small
+      Windows/Android helper exposing a localhost endpoint) + a tiny local bridge
+      WE build to capture → match a template → POST a punch. Needs a Windows PC at
+      the counter + per-staff fingerprint ENROLMENT + 1:N matching that we own.
+      Trade-off: USB scanner = cheapest hardware but most dev + tied to one PC;
+      standalone ZKTeco/ESSL WiFi (ADMS push) = slightly more hardware cost but
+      far less integration and runs as a wall appliance. Both just write the SAME
+      Attendance rows through one ingest endpoint — pick by the counter setup
+      (Windows billing PC already there → USB viable; no PC / wall mount → WiFi
+      device).
 
 **Seed / demo data:** `manage.py seed_cafe` creates Cafe Gopala + tables +
 starter menu, links the superuser as owner, and adds cashier/kitchen logins.
@@ -166,9 +216,13 @@ at the same time — so it's a first-class mode, not an edge case:
         links it to the order — quietly building the customer DB (visit count /
         total spent / last order denormalised for CRM later). Keep a CONSENT flag
         from the start (see privacy note).
-      - **Per-tenant UPI settings.** Owner enters their UPI VPA once (e.g.
-        cafegopala@okhdfcbank) + display name ("details from the company"). Stored
-        on the tenant (alongside the future branding record).
+      - **Per-tenant UPI settings (CONFIGURABLE, never hardcoded).** Owner enters
+        their UPI VPA once (e.g. cafegopala@okhdfcbank) + display name in Settings.
+        Stored on the tenant (alongside the future branding record). The UPI QR
+        feature activates for a restaurant ONLY once its owner has filled this in
+        — Praveen supplies Cafe Gopala's as the first tenant; every other
+        restaurant/hotel owner sets their own. Build it configurable so it simply
+        switches on once set up correctly.
       - **Dynamic UPI QR at payment.** Generate `upi://pay?pa=<vpa>&pn=<name>&am=
         <total>&tn=<order ref>&cu=INR` and render as a QR. Customer scans → amount
         + note prefilled → pays. FREE to generate (no gateway, no fees). CAVEAT:
@@ -408,6 +462,13 @@ Staged so it's always honest — a confident wrong answer is worse than none.
       change stock or orders.
 
 ## Notes / principles
+- EVERYTHING restaurant-specific is PER-TENANT and owner-configured in Settings —
+  never hardcoded for Cafe Gopala. UPI VPA + payee name, GST number, business
+  name / address / phone, bill footer, logo + brand colours all live on the
+  Tenant, and each owner fills in their own. Praveen supplies Cafe Gopala's as
+  the first tenant; every other restaurant/hotel self-configures. Build each such
+  feature as CONFIGURABLE so it simply "switches on" once that owner has set it up
+  correctly — no code change per customer.
 - Match features to the customer: dead-simple for one-person eateries, fuller
   tiers for bigger restaurants. Don't force big-kitchen features on small ones.
 - Flat SaaS fee, not per-order commission — "friend to the restaurant."

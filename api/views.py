@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import ProtectedError
 from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -16,14 +17,14 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 
 from tenancy.current import set_current_tenant
-from accounts.models import User
+from accounts.models import User, Attendance
 from catalog.models import MenuCategory, MenuItem
 from orders.models import Table, Order, OrderLine, Payment, Customer
 from . import menu_import
 from .serializers import (
     MenuCategorySerializer, TableSerializer, OrderSerializer,
     MenuCategoryAdminSerializer, MenuItemAdminSerializer, TableAdminSerializer,
-    UserAdminSerializer,
+    UserAdminSerializer, AttendanceSerializer, TenantSettingsSerializer,
 )
 
 
@@ -457,3 +458,139 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
             status__in=[Order.Status.NEW, Order.Status.PREPARING, Order.Status.READY]
         )
         return Response(OrderSerializer(qs, many=True).data)
+
+
+# ---------------- Attendance & payroll ----------------
+
+def _range(request):
+    """(start, end) inclusive local dates; default = this month so far."""
+    today = timezone.localdate()
+    start = parse_date(request.query_params.get("from") or "") or today.replace(day=1)
+    end = parse_date(request.query_params.get("to") or "") or today
+    return start, end
+
+
+class AttendanceEmployeesView(TenantViewMixin, APIView):
+    """Staff list + who is currently clocked in, for the shared punch screen.
+    Any logged-in tenant user can read this (the counter device)."""
+    def get(self, request):
+        users = (User.objects.filter(tenant=request.user.tenant, is_active=True)
+                 .exclude(is_superuser=True).order_by("username"))
+        open_ids = set(Attendance.objects.for_current()
+                       .filter(clock_out__isnull=True)
+                       .values_list("employee_id", flat=True))
+        return Response([{
+            "id": u.id,
+            "username": u.username,
+            "role": u.role,
+            "has_pin": bool(u.attendance_pin),
+            "clocked_in": u.id in open_ids,
+        } for u in users])
+
+
+class AttendancePunchView(TenantViewMixin, APIView):
+    """Clock a staff member in or out (toggles). The server sets the time, so
+    arrival/leave times can't be faked. PIN-gated."""
+    def post(self, request):
+        emp_id = request.data.get("employee_id")
+        pin = (request.data.get("pin") or "").strip()
+        try:
+            emp = (User.objects.filter(tenant=request.user.tenant, is_active=True)
+                   .exclude(is_superuser=True).get(pk=emp_id))
+        except (User.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Staff member not found."}, status=404)
+        if not emp.attendance_pin:
+            return Response({"detail": "No PIN set for this staff member. "
+                                       "Set one in Settings first."}, status=400)
+        if pin != emp.attendance_pin:
+            return Response({"detail": "Wrong PIN."}, status=400)
+        open_rec = (Attendance.objects.for_current()
+                    .filter(employee=emp, clock_out__isnull=True)
+                    .order_by("-clock_in").first())
+        now = timezone.now()
+        if open_rec:
+            open_rec.clock_out = now
+            open_rec.save(update_fields=["clock_out"])
+            return Response({"action": "out",
+                             "record": AttendanceSerializer(open_rec).data})
+        rec = Attendance.objects.create(employee=emp, clock_in=now, source="manual")
+        return Response({"action": "in",
+                         "record": AttendanceSerializer(rec).data})
+
+
+class AttendanceListView(TenantViewMixin, APIView):
+    """Owner/admin: raw attendance records in a date range (default this month).
+    Optional ?employee=<id>."""
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get(self, request):
+        start, end = _range(request)
+        qs = (Attendance.objects.for_current()
+              .filter(clock_in__date__gte=start, clock_in__date__lte=end)
+              .select_related("employee").order_by("-clock_in"))
+        emp = request.query_params.get("employee")
+        if emp:
+            qs = qs.filter(employee_id=emp)
+        return Response(AttendanceSerializer(qs, many=True).data)
+
+
+class AttendanceSummaryView(TenantViewMixin, APIView):
+    """Owner/admin: per-employee hours, days present, and computed pay for a
+    range. Pay rules (v1): hourly = hours x rate; daily = days x rate;
+    monthly = the fixed rate (shown for reference). Only completed punches
+    (clocked out) count toward hours."""
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get(self, request):
+        start, end = _range(request)
+        recs = (Attendance.objects.for_current()
+                .filter(clock_in__date__gte=start, clock_in__date__lte=end,
+                        clock_out__isnull=False)
+                .select_related("employee"))
+        agg = {}
+        for r in recs:
+            e = r.employee
+            a = agg.get(e.id)
+            if a is None:
+                a = agg[e.id] = {
+                    "employee": e.id, "username": e.username,
+                    "wage_type": e.wage_type, "wage_rate": e.wage_rate or Decimal("0"),
+                    "hours": Decimal("0"), "_days": set(),
+                }
+            a["hours"] += Decimal(str(r.hours or 0))
+            a["_days"].add(timezone.localtime(r.clock_in).date())
+        rows = []
+        for a in agg.values():
+            hours = a["hours"].quantize(Decimal("0.01"))
+            days = len(a["_days"])
+            rate = a["wage_rate"]
+            if a["wage_type"] == User.WageType.HOURLY:
+                pay = (hours * rate).quantize(Decimal("0.01"))
+            elif a["wage_type"] == User.WageType.DAILY:
+                pay = (Decimal(days) * rate).quantize(Decimal("0.01"))
+            else:  # monthly fixed
+                pay = rate.quantize(Decimal("0.01"))
+            rows.append({
+                "employee": a["employee"], "username": a["username"],
+                "wage_type": a["wage_type"], "wage_rate": rate,
+                "hours": hours, "days": days, "pay": pay,
+            })
+        rows.sort(key=lambda x: x["username"])
+        return Response({"from": str(start), "to": str(end), "rows": rows})
+
+
+# ---------------- Restaurant settings (UPI, etc.) ----------------
+
+class TenantSettingsView(TenantViewMixin, APIView):
+    """GET: any tenant user reads their restaurant's settings (the cashier needs
+    the UPI VPA to render the payment QR). PATCH: owner/admin only."""
+    def get(self, request):
+        return Response(TenantSettingsSerializer(request.user.tenant).data)
+
+    def patch(self, request):
+        if getattr(request.user, "role", None) not in (User.Role.OWNER, User.Role.ADMIN):
+            return Response({"detail": "Only an owner or admin can change settings."}, status=403)
+        ser = TenantSettingsSerializer(request.user.tenant, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)

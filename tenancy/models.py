@@ -6,6 +6,10 @@ class Tenant(models.Model):
     name = models.CharField(max_length=120)
     slug = models.SlugField(unique=True)
     is_active = models.BooleanField(default=True)
+    # --- per-restaurant payment config (owner sets these in Settings; nothing
+    # is hardcoded). The UPI QR at billing switches on once upi_vpa is filled. ---
+    upi_vpa = models.CharField(max_length=80, blank=True)        # e.g. cafegopala@okhdfcbank
+    upi_payee_name = models.CharField(max_length=80, blank=True)  # shown in the customer's UPI app
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

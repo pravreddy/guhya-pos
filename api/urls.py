@@ -15,4 +15,9 @@ urlpatterns = [
     path("auth/login/", views.login, name="api-login"),
     path("menu-import/", views.MenuImportView.as_view(), name="menu-import"),
     path("menu-export/", views.MenuExportView.as_view(), name="menu-export"),
+    path("attendance/employees/", views.AttendanceEmployeesView.as_view(), name="attendance-employees"),
+    path("attendance/punch/", views.AttendancePunchView.as_view(), name="attendance-punch"),
+    path("attendance/summary/", views.AttendanceSummaryView.as_view(), name="attendance-summary"),
+    path("attendance/", views.AttendanceListView.as_view(), name="attendance-list"),
+    path("tenant/", views.TenantSettingsView.as_view(), name="tenant-settings"),
 ] + router.urls
