@@ -86,6 +86,11 @@
 
     .cat { margin-bottom: 18px; }
     .cat h4 { margin: 0 0 9px; font-size: 14px; color: var(--brand-dark); }
+    .menu-tools { position: sticky; top: -14px; background: var(--surface); padding: 10px 0; margin: -14px 0 10px; z-index: 5; border-bottom: 1px solid var(--line); }
+    .menu-search { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+    .cat-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+    .chip { white-space: nowrap; border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); padding: 6px 12px; border-radius: 20px; font-weight: 600; font-size: 13px; }
+    .chip.on { background: var(--brand); color: #fff; border-color: var(--brand); }
     .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
     .item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--surface);
             display: flex; flex-direction: column; gap: 7px; }
@@ -235,6 +240,8 @@
       const [selTable, setSelTable] = useState(null);
       const [busy, setBusy] = useState(false);
       const [pay, setPay] = useState(false);
+      const [q, setQ] = useState('');
+      const [activeCat, setActiveCat] = useState('all');
 
       const loadBase = useCallback(async () => {
         const [t, m] = await Promise.all([api('/tables/'), api('/menu/')]);
@@ -264,6 +271,11 @@
       };
       const closeAfterPay = async () => { setPay(false); setOrder(null); setSelTable(null); await loadBase(); };
 
+      const ql = q.trim().toLowerCase();
+      const visibleMenu = menu
+        .map(cat => ({ ...cat, items: ql ? cat.items.filter(it => it.name.toLowerCase().includes(ql)) : cat.items }))
+        .filter(cat => ql ? cat.items.length > 0 : (activeCat === 'all' || cat.id === activeCat));
+
       return html`
         <div class="cashier">
           <div class="pane tables">
@@ -277,9 +289,16 @@
           </div>
 
           <div class="pane menu">
-            <h3>Menu</h3>
+            <div class="menu-tools">
+              <input class="menu-search" placeholder="Search menu…" value=${q} onChange=${e => setQ(e.target.value)} />
+              <div class="cat-tabs">
+                <button class=${'chip ' + (activeCat === 'all' && !ql ? 'on' : '')} onClick=${() => { setActiveCat('all'); setQ(''); }}>All</button>
+                ${menu.map(c => html`<button key=${c.id} class=${'chip ' + (activeCat === c.id && !ql ? 'on' : '')} onClick=${() => { setActiveCat(c.id); setQ(''); }}>${c.name}</button>`)}
+              </div>
+            </div>
             ${menu.length === 0 && html`<div class="empty">No menu items yet. Add them from Menu / admin.</div>`}
-            ${menu.map(cat => html`
+            ${menu.length > 0 && visibleMenu.length === 0 && html`<div class="empty">No items match “${q}”.</div>`}
+            ${visibleMenu.map(cat => html`
               <div class="cat" key=${cat.id}>
                 <h4>${cat.name}</h4>
                 <div class="items">
@@ -479,6 +498,7 @@
         <div style=${{ padding: '18px', maxWidth: '920px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
           <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px' }}>
             <h2 style=${{ margin: 0, flex: 1 }}>Menu</h2>
+            <button class="btn sm ghost" onClick=${() => setImportCat('all')}>Import menu</button>
             <input placeholder="New category" value=${newCat} onChange=${e => setNewCat(e.target.value)}
                    onKeyDown=${e => e.key === 'Enter' && addCategory()}
                    style=${{ padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '8px' }} />
@@ -516,7 +536,8 @@
 
           ${editItem && html`<${ItemModal} item=${editItem} cats=${cats}
               onClose=${() => setEditItem(null)} onSaved=${() => { setEditItem(null); load(); }} />`}
-          ${importCat != null && html`<${ImportModal} categoryId=${importCat}
+          ${importCat != null && html`<${ImportModal} cats=${cats}
+              defaultCategoryName=${typeof importCat === 'number' ? (cats.find(c => c.id === importCat) || {}).name : null}
               onClose=${() => setImportCat(null)} onDone=${() => { setImportCat(null); load(); }} />`}
         </div>`;
     }
@@ -577,18 +598,20 @@
         </div>`;
     }
 
-    function ImportModal({ categoryId, onClose, onDone }) {
+    function ImportModal({ cats, defaultCategoryName, onClose, onDone }) {
       const [text, setText] = useState('');
       const [rows, setRows] = useState(null);
       const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
       const [uploading, setUploading] = useState(false);
       const fileRef = useRef(null); const camRef = useRef(null);
+      const defCat = defaultCategoryName || '';
+      const withCat = (r) => ({ ...r, category: (r.category && r.category.trim()) || defCat });
 
       const parseText = () => {
         const out = text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
           const m = line.match(/^(.*?)[\s,\-–]+(\d+(?:\.\d+)?)\s*$/);
-          return m ? { name: m[1].trim(), price: m[2], half_price: null, food_type: 'veg', gst_rate: 5 }
-                   : { name: line, price: '', half_price: null, food_type: 'veg', gst_rate: 5 };
+          const base = m ? { name: m[1].trim(), price: m[2] } : { name: line, price: '' };
+          return { ...base, half_price: null, food_type: 'veg', gst_rate: 5, category: defCat };
         });
         setRows(out);
       };
@@ -604,7 +627,7 @@
           if (!data || !data.rows || data.rows.length === 0) {
             setErr('Could not read any items from that file. Try a clearer photo, or use the paste box below.');
           } else {
-            setRows(data.rows);
+            setRows(data.rows.map(withCat));
           }
         } catch (e2) { setErr(e2.message); } finally { setUploading(false); }
       };
@@ -612,13 +635,27 @@
       const setRow = (i, k, v) => setRows(rs => rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
       const removeRow = (i) => setRows(rs => rs.filter((_, j) => j !== i));
       const ready = rows ? rows.filter(r => r.name && r.price !== '') : [];
+      const catCount = new Set(ready.map(r => (r.category || defCat || 'Other').trim().toLowerCase())).size;
+
       const confirm = async () => {
         setErr(''); setBusy(true);
         try {
+          const map = {}; let order = cats.length;
+          cats.forEach(c => { map[c.name.trim().toLowerCase()] = c.id; });
           for (const r of ready) {
+            const cname = (r.category || defCat || 'Other').trim();
+            const key = cname.toLowerCase();
+            if (!(key in map)) {
+              const created = await api('/menu-categories/', { method: 'POST', body: { name: cname, sort_order: order++ } });
+              map[key] = created.id;
+            }
+          }
+          for (const r of ready) {
+            const key = (r.category || defCat || 'Other').trim().toLowerCase();
             await api('/menu-items/', { method: 'POST', body: {
-              name: r.name, price: r.price, half_price: r.half_price != null && r.half_price !== '' ? r.half_price : null,
-              food_type: r.food_type, gst_rate: r.gst_rate, is_available: true, category: categoryId,
+              name: r.name, price: r.price,
+              half_price: r.half_price != null && r.half_price !== '' ? r.half_price : null,
+              food_type: r.food_type, gst_rate: r.gst_rate, is_available: true, category: map[key],
             } });
           }
           onDone();
@@ -626,12 +663,14 @@
       };
       return html`
         <div class="modal-bg" onClick=${onClose}>
-          <div class="modal" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '520px' }}>
-            <h3>Import items</h3>
+          <div class="modal" onClick=${e => e.stopPropagation()} style=${{ maxWidth: rows ? '680px' : '520px' }}>
+            <h3>${defaultCategoryName ? 'Import into ' + defaultCategoryName : 'Import menu'}</h3>
             ${err && html`<div class="err">${err}</div>`}
+            <datalist id="catnames">${cats.map(c => html`<option key=${c.id} value=${c.name} />`)}</datalist>
             ${!rows && html`
               <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>
                 Upload a <b>photo, PDF, or spreadsheet</b> of the menu and AI reads it — or paste items below.
+                ${defaultCategoryName ? '' : ' AI also suggests a category for each item — you can rename them before saving.'}
                 You'll review and edit everything before saving.</p>
               <div style=${{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
                 <button class="btn" style=${{ flex: 1 }} disabled=${uploading} onClick=${() => fileRef.current && fileRef.current.click()}>
@@ -651,8 +690,12 @@
                 <button class="btn" style=${{ flex: 2 }} disabled=${!text.trim() || uploading} onClick=${parseText}>Review pasted</button>
               </div>`}
             ${rows && html`
-              <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>Review and fix, then save. Rows without a price are skipped.</p>
-              <div style=${{ maxHeight: '320px', overflowY: 'auto', margin: '4px 0 12px' }}>
+              <p style=${{ color: 'var(--ink-soft)', fontSize: '13px', marginTop: 0 }}>
+                Review and fix, then save. Set a category for each (type a new name or pick an existing one). Rows without a price are skipped.</p>
+              <div style=${{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '.03em', padding: '0 2px 4px' }}>
+                <span style=${{ flex: 2 }}>Item</span><span style=${{ width: '64px' }}>Price</span><span style=${{ width: '86px' }}>Type</span><span style=${{ flex: 1 }}>Category</span><span style=${{ width: '24px' }}></span>
+              </div>
+              <div style=${{ maxHeight: '340px', overflowY: 'auto', margin: '0 0 12px' }}>
                 ${rows.map((r, i) => html`
                   <div key=${i} style=${{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
                     <input value=${r.name} onChange=${e => setRow(i, 'name', e.target.value)}
@@ -660,16 +703,19 @@
                     <input value=${r.price} placeholder="₹" onChange=${e => setRow(i, 'price', e.target.value)}
                       style=${{ width: '64px', padding: '7px', border: '1px solid var(--line)', borderRadius: '8px' }} />
                     <select value=${r.food_type} onChange=${e => setRow(i, 'food_type', e.target.value)}
-                      style=${{ padding: '7px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)' }}>
+                      style=${{ width: '86px', padding: '7px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--surface)' }}>
                       ${FOOD_OPTS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
                     </select>
+                    <input list="catnames" value=${r.category || ''} placeholder="Category"
+                      onChange=${e => setRow(i, 'category', e.target.value)}
+                      style=${{ flex: 1, padding: '7px', border: '1px solid var(--line)', borderRadius: '8px' }} />
                     <button class="btn ghost sm" onClick=${() => removeRow(i)}>✕</button>
                   </div>`)}
               </div>
               <div style=${{ display: 'flex', gap: '8px' }}>
                 <button class="btn ghost" style=${{ flex: 1 }} onClick=${() => setRows(null)}>Back</button>
                 <button class="btn accent" style=${{ flex: 2 }} disabled=${busy || ready.length === 0} onClick=${confirm}>
-                  ${busy ? 'Saving…' : 'Add ' + ready.length + ' items'}</button>
+                  ${busy ? 'Saving…' : 'Add ' + ready.length + ' items' + (catCount > 1 ? ' in ' + catCount + ' categories' : '')}</button>
               </div>`}
           </div>
         </div>`;

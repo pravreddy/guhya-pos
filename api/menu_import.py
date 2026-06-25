@@ -27,14 +27,18 @@ EXTRACT_INSTRUCTIONS = (
     "Return ONLY a JSON array and nothing else - no prose, no markdown fences. "
     "Each element must be an object with exactly these keys: "
     '"name" (string), "price" (number), "half_price" (number or null), '
-    '"food_type" (one of "veg", "nonveg", "egg"). '
+    '"food_type" (one of "veg", "nonveg", "egg"), "category" (string). '
     "Rules: price is the full price as a plain number with no currency symbol. "
     "If a half / small portion price is shown, put it in half_price, else null. "
     'food_type: use "nonveg" for chicken/mutton/fish/prawn/meat dishes, "egg" '
     'for egg dishes, otherwise "veg". Indian menus often mark veg items with a '
     "green dot and non-veg with a red or brown dot - use those if visible. "
-    "Skip section headings, addresses, phone numbers, GST notes, and any line "
-    "without a price. Clean item names to Title Case and drop trailing dots."
+    '"category" is the menu section the item sits under - the nearest heading '
+    'above it (for example "Afternoon", "Evening", "Beverages", "Rice & Meals", '
+    '"Starters", "Tiffins"). If there is no clear section, use "Other". '
+    "Do NOT output the section headings themselves as items. Skip addresses, "
+    "phone numbers, GST notes, and any line without a price. Clean item names to "
+    "Title Case and drop trailing dots."
 )
 
 
@@ -149,6 +153,7 @@ def _clean_rows(data):
             "half_price": _num(d.get("half_price")),
             "food_type": ft,
             "gst_rate": 5,
+            "category": str(d.get("category", "")).strip()[:60],
         })
     return rows
 
@@ -183,7 +188,8 @@ def _rows_from_pairs(text):
         m = re.match(r"^(.*?)[\s,\-\u2013]+(\d+(?:\.\d+)?)\s*$", line)
         if m:
             rows.append({"name": m.group(1).strip()[:120], "price": _num(m.group(2)) or "",
-                         "half_price": None, "food_type": "veg", "gst_rate": 5})
+                         "half_price": None, "food_type": "veg", "gst_rate": 5,
+                         "category": ""})
     return rows
 
 
@@ -204,6 +210,7 @@ def extract_from_csv(raw):
         c_half = col("half", "half price", "half_price")
         c_type = col("type", "food type", "food_type", "veg")
         c_gst = col("gst", "gst rate", "gst_rate", "tax")
+        c_cat = col("category", "section", "group", "menu")
         if c_name and c_price:
             rows = []
             for r in reader:
@@ -219,6 +226,7 @@ def extract_from_csv(raw):
                     "half_price": _num(r.get(c_half)) if c_half else None,
                     "food_type": ft,
                     "gst_rate": (_num(r.get(c_gst)) or 5) if c_gst else 5,
+                    "category": (r.get(c_cat) or "").strip() if c_cat else "",
                 })
             return rows
     # no usable header -> treat as "name price" lines
