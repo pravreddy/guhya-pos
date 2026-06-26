@@ -135,6 +135,9 @@ class OrderSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True, default=None)
     customer_phone = serializers.CharField(source="customer.phone", read_only=True, default=None)
     customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
+    customer_email = serializers.CharField(source="customer.email", read_only=True, default=None)
+    customer_telegram = serializers.CharField(source="customer.telegram", read_only=True, default=None)
+    customer_consent = serializers.BooleanField(source="customer.marketing_consent", read_only=True, default=None)
     amount_paid = serializers.SerializerMethodField()
     balance = serializers.SerializerMethodField()
 
@@ -143,6 +146,7 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = ["id", "table", "table_name", "source", "service_mode",
                   "token", "status",
                   "customer", "customer_phone", "customer_name",
+                  "customer_email", "customer_telegram", "customer_consent",
                   "aggregator_name", "external_ref",
                   "subtotal", "tax_total", "total",
                   "amount_paid", "balance",

@@ -20,4 +20,5 @@ urlpatterns = [
     path("attendance/summary/", views.AttendanceSummaryView.as_view(), name="attendance-summary"),
     path("attendance/", views.AttendanceListView.as_view(), name="attendance-list"),
     path("tenant/", views.TenantSettingsView.as_view(), name="tenant-settings"),
+    path("customers/lookup/", views.CustomerLookupView.as_view(), name="customer-lookup"),
 ] + router.urls

@@ -24,6 +24,8 @@ class Customer(TenantAwareModel):
     phone within a restaurant."""
     phone = models.CharField(max_length=20)
     name = models.CharField(max_length=80, blank=True)
+    email = models.EmailField(blank=True)
+    telegram = models.CharField(max_length=64, blank=True)  # @username / chat handle
     # consent to be contacted for marketing (loyalty/offers). Kept from day one
     # so we never message people who didn't opt in.
     marketing_consent = models.BooleanField(default=False)

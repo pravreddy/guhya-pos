@@ -248,6 +248,8 @@
       } catch (e) { return null; }
     };
 
+    const fmtDateTime = (iso) => { try { return new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch { return ''; } };
+
     // Compose a plain-text bill for WhatsApp, and a wa.me click-to-chat link.
     const buildBillText = (order, tenant) => {
       const name = (tenant && tenant.name) || 'Our cafe';
@@ -256,6 +258,7 @@
       L.push('Bill #' + order.id
         + (order.table_name ? ' · ' + order.table_name : '')
         + (order.token != null ? ' · Token ' + order.token : ''));
+      if (order.created_at) L.push(fmtDateTime(order.created_at));
       L.push('');
       (order.lines || []).forEach(l => {
         L.push(l.qty + ' x ' + l.name_snapshot + (l.is_half ? ' (half)' : '') + '  ' + rupee(l.line_total));
@@ -309,7 +312,7 @@
         '<div class="center b big">' + escapeHtml(name) + '</div>' +
         (tenant && tenant.whatsapp_number ? '<div class="center muted">' + escapeHtml(tenant.whatsapp_number) + '</div>' : '') +
         (copyLabel ? '<div class="center muted b">[' + copyLabel + ']</div>' : '') +
-        '<div class="center muted">' + new Date().toLocaleString() + '</div>' +
+        '<div class="center muted">' + (order.created_at ? fmtDateTime(order.created_at) : new Date().toLocaleString()) + '</div>' +
         (meta ? '<div class="center muted">' + meta + '</div>' : '') +
         '<div class="hr"></div>' +
         '<table>' + rows + '</table>' +
@@ -444,10 +447,10 @@
         try { await api('/tables/' + selTable.id + '/free/', { method: 'POST' }); clearSel(); await loadBase(); }
         catch (e) { alert(e.message); }
       };
-      const setCustomer = async (phone, name) => {
+      const setCustomer = async (phone, name, email, telegram, consent) => {
         if (!order) return;
         try {
-          const o = await api('/orders/' + order.id + '/set_customer/', { method: 'POST', body: { phone, name } });
+          const o = await api('/orders/' + order.id + '/set_customer/', { method: 'POST', body: { phone, name, email, telegram, marketing_consent: consent } });
           setOrder(o); refreshActive();
         } catch (e) { alert(e.message); }
       };
@@ -670,25 +673,65 @@
         </div>`;
     }
 
-    // Optional, skippable customer capture on the open bill (phone-first CRM).
+    // Optional, skippable customer capture on the open bill. Phone is the
+    // customer's ID: typing it and tapping Find recalls a returning diner's
+    // saved name/email/telegram so the cashier never re-asks (phone-first CRM).
     function CustomerBar({ order, onSet }) {
       const has = !!order.customer;
       const [open, setOpen] = useState(false);
       const [phone, setPhone] = useState('');
       const [name, setName] = useState('');
+      const [email, setEmail] = useState('');
+      const [tg, setTg] = useState('');
+      const [consent, setConsent] = useState(false);
+      const [info, setInfo] = useState('');
+      const [finding, setFinding] = useState(false);
       const bar = { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderBottom: '1px solid var(--line)', background: '#faf7f1' };
       const inp = { padding: '7px 9px', border: '1px solid var(--line)', borderRadius: '8px' };
-      const openEdit = () => { setPhone(order.customer_phone || ''); setName(order.customer_name || ''); setOpen(true); };
-      const save = () => { if (!phone.trim()) return; onSet(phone.trim(), name.trim()); setOpen(false); };
+      const openEdit = () => {
+        setPhone(order.customer_phone || ''); setName(order.customer_name || '');
+        setEmail(order.customer_email || ''); setTg(order.customer_telegram || '');
+        setConsent(!!order.customer_consent); setInfo(''); setOpen(true);
+      };
+      const find = async () => {
+        const p = phone.trim(); if (!p) return;
+        setFinding(true); setInfo('');
+        try {
+          const r = await api('/customers/lookup/?phone=' + encodeURIComponent(p));
+          if (r && r.found) {
+            setName(r.name || ''); setEmail(r.email || ''); setTg(r.telegram || '');
+            setConsent(!!r.marketing_consent);
+            setInfo('Returning · ' + (r.visit_count || 0) + ' visit' + (r.visit_count === 1 ? '' : 's') + ' · ' + rupee(r.total_spent || 0) + ' spent');
+          } else { setInfo('New customer'); }
+        } catch (e) { setInfo(''); } finally { setFinding(false); }
+      };
+      const save = () => {
+        if (!phone.trim()) return;
+        onSet(phone.trim(), name.trim(), email.trim(), tg.trim(), consent);
+        setOpen(false);
+      };
       if (open) {
         return html`
-          <div style=${{ ...bar, flexWrap: 'wrap', gap: '6px' }}>
-            <input placeholder="Phone" inputmode="tel" value=${phone} onChange=${e => setPhone(e.target.value)}
-              style=${{ ...inp, flex: 1, minWidth: '110px' }} />
-            <input placeholder="Name (optional)" value=${name} onChange=${e => setName(e.target.value)}
-              style=${{ ...inp, flex: 1, minWidth: '110px' }} />
-            <button class="btn sm" disabled=${!phone.trim()} onClick=${save}>Save</button>
-            <button class="btn ghost sm" onClick=${() => setOpen(false)}>Cancel</button>
+          <div style=${{ ...bar, flexDirection: 'column', alignItems: 'stretch', gap: '6px' }}>
+            <div style=${{ display: 'flex', gap: '6px' }}>
+              <input placeholder="Phone (customer ID)" inputmode="tel" value=${phone}
+                onChange=${e => setPhone(e.target.value)} onKeyDown=${e => e.key === 'Enter' && find()}
+                style=${{ ...inp, flex: 1 }} />
+              <button class="btn ghost sm" disabled=${!phone.trim() || finding} onClick=${find}>${finding ? '…' : 'Find'}</button>
+            </div>
+            ${info && html`<div style=${{ fontSize: '12px', color: 'var(--ink-soft)' }}>${info}</div>`}
+            <div style=${{ display: 'flex', gap: '6px' }}>
+              <input placeholder="Name" value=${name} onChange=${e => setName(e.target.value)} style=${{ ...inp, flex: 1, minWidth: '90px' }} />
+              <input placeholder="Email (optional)" inputmode="email" value=${email} onChange=${e => setEmail(e.target.value)} style=${{ ...inp, flex: 1, minWidth: '90px' }} />
+            </div>
+            <input placeholder="Telegram @username (optional)" value=${tg} onChange=${e => setTg(e.target.value)} style=${inp} />
+            <label style=${{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--ink-soft)' }}>
+              <input type="checkbox" checked=${consent} onChange=${e => setConsent(e.target.checked)} />
+              OK to send offers / loyalty messages</label>
+            <div style=${{ display: 'flex', gap: '6px' }}>
+              <button class="btn sm" disabled=${!phone.trim()} onClick=${save}>Save</button>
+              <button class="btn ghost sm" onClick=${() => setOpen(false)}>Cancel</button>
+            </div>
           </div>`;
       }
       if (has) {
@@ -696,12 +739,12 @@
           <div style=${bar}>
             <span style=${{ flex: 1, fontSize: '13px' }}>📱 ${order.customer_phone}${order.customer_name ? ' · ' + order.customer_name : ''}</span>
             <button class="btn ghost sm" onClick=${openEdit}>Change</button>
-            <button class="btn ghost sm" onClick=${() => onSet('', '')}>Remove</button>
+            <button class="btn ghost sm" onClick=${() => onSet('', '', '', '', false)}>Remove</button>
           </div>`;
       }
       return html`
         <div style=${bar}>
-          <span style=${{ flex: 1, fontSize: '13px', color: 'var(--ink-soft)' }}>Add customer phone (for bill / loyalty)</span>
+          <span style=${{ flex: 1, fontSize: '13px', color: 'var(--ink-soft)' }}>Add customer (phone = ID; recalls saved details)</span>
           <button class="btn ghost sm" onClick=${openEdit}>+ Add</button>
         </div>`;
     }

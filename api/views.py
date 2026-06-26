@@ -335,19 +335,33 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def set_customer(self, request, pk=None):
         """Attach (or clear) a customer on this order by phone. Upserts a
-        tenant-scoped Customer (optional, skippable). An empty phone clears it."""
+        tenant-scoped Customer (optional, skippable). An empty phone clears it.
+        Phone is the customer's ID within the restaurant; name/email/telegram/
+        consent are saved on the profile and recalled on the next visit."""
         order = self.get_object()
         phone = (request.data.get("phone") or "").strip()
         name = (request.data.get("name") or "").strip()
+        email = (request.data.get("email") or "").strip()
+        telegram = (request.data.get("telegram") or "").strip()
+        consent = request.data.get("marketing_consent")
         if not phone:
             order.customer = None
             order.save(update_fields=["customer", "updated_at"])
             return self._respond(order.pk)
         customer, _created = Customer.objects.for_current().get_or_create(
-            phone=phone, defaults={"name": name})
-        if name and not customer.name:        # fill a missing name, don't clobber
-            customer.name = name
-            customer.save(update_fields=["name"])
+            phone=phone, defaults={"name": name, "email": email, "telegram": telegram})
+        changed = []
+        # update non-empty provided values (cashier is explicitly editing here)
+        if name and customer.name != name:
+            customer.name = name; changed.append("name")
+        if email and customer.email != email:
+            customer.email = email; changed.append("email")
+        if telegram and customer.telegram != telegram:
+            customer.telegram = telegram; changed.append("telegram")
+        if consent is not None and customer.marketing_consent != bool(consent):
+            customer.marketing_consent = bool(consent); changed.append("marketing_consent")
+        if changed:
+            customer.save(update_fields=changed)
         order.customer = customer
         order.save(update_fields=["customer", "updated_at"])
         return self._respond(order.pk)
@@ -458,6 +472,27 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
             status__in=[Order.Status.NEW, Order.Status.PREPARING, Order.Status.READY]
         )
         return Response(OrderSerializer(qs, many=True).data)
+
+
+class CustomerLookupView(TenantViewMixin, APIView):
+    """Recall a returning diner by phone (their ID within this restaurant) so the
+    cashier doesn't re-ask for name/email/telegram. Returns the saved profile +
+    visit stats, or {found: false}. Tenant-scoped: a restaurant only sees its own
+    customers."""
+    def get(self, request):
+        phone = (request.query_params.get("phone") or "").strip()
+        if not phone:
+            return Response({"found": False})
+        c = Customer.objects.for_current().filter(phone=phone).first()
+        if not c:
+            return Response({"found": False})
+        return Response({
+            "found": True,
+            "phone": c.phone, "name": c.name, "email": c.email,
+            "telegram": c.telegram, "marketing_consent": c.marketing_consent,
+            "visit_count": c.visit_count, "total_spent": c.total_spent,
+            "last_order_at": c.last_order_at,
+        })
 
 
 # ---------------- Attendance & payroll ----------------

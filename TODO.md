@@ -168,6 +168,30 @@ talks to the `/api/` that's already built, using token login for access per role
       default); 58mm rolls may scale the 72mm layout to fit. LATER upgrade for a
       one-tap SILENT print = direct ESC/POS via WebUSB / Web Bluetooth (no dialog);
       plus a dedicated KOT (kitchen ticket) print — see the KOT item below.
+- [x] **Customer profile + phone-lookup + bill date/time (DONE 2026-06-26).**
+      Phone = the customer's ID (no separate account/login — diners won't make
+      one at a counter). At billing the cashier can type a phone and tap FIND to
+      recall a returning diner's saved name / email / Telegram + visit stats
+      (visits, total spent) so we never re-ask — capture once, recall forever.
+      Captured fields now: phone, name, email, Telegram handle, and a marketing-
+      CONSENT checkbox (a transactional bill needs no consent; OFFERS later do —
+      DLT-style opt-in, captured from day one so the wedge stays compliant). The
+      Customer record is TENANT-SCOPED (each restaurant owns its own list; no
+      cross-restaurant global profile — that's a bigger, privacy-sensitive thing,
+      deliberately not built). Bill date/time now shows on the printed receipt AND
+      in the WhatsApp/Telegram/Email text (from order.created_at, so reprints show
+      the real bill time, not 'now'). Backend: Customer gained email+telegram
+      (orders/0004_customer_contacts); GET /customers/lookup/?phone= returns the
+      saved profile; set_customer persists the new fields + consent;
+      OrderSerializer exposes customer_email/telegram/consent. This is the clean
+      DATA-CAPTURE foundation for the CRM/AI wedge (mining behaviour, preferences,
+      churn, personalised offers) — that analysis stays the roadmap work in
+      sections C + D; capture clean now, mine later.
+- [ ] **Customers admin screen (near-term follow-up to the capture above).** A
+      "Customers" tab (owner/admin) to BROWSE / search the saved list, open each
+      diner's order history + visit/spend stats, edit details, and export — the
+      human-facing view of the data we now capture, and the surface loyalty /
+      offers / win-back campaigns will hang off.
 - [ ] **Phase 3b — automated EMAIL / SMTP bill delivery (design decided 2026-06-25).**
       Today email = a `mailto:` the cashier sends by hand; this is the automatic
       server-side version. Open questions resolved:
