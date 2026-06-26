@@ -157,6 +157,65 @@ talks to the `/api/` that's already built, using token login for access per role
       to /start it; SMTP auto-send needs a captured customer email — add a
       Customer.email field then; the box already runs mailcow for SMTP). For now
       all three channels are manual click-send.
+- [x] **Bill PRINTING — thermal/receipt, customer + restaurant copy (DONE).** A
+      "Print bill" button on the cashier bill AND the post-pay screen renders a
+      narrow (~72mm) monospace receipt and prints via the browser to ANY installed
+      printer (a USB/Bluetooth thermal printer with its driver installed shows up
+      as a normal printer). Prints TWO copies in one shot — CUSTOMER COPY +
+      RESTAURANT COPY, separated by a cut line. Pure client-side (hidden iframe +
+      window.print()), no backend, no hardware integration. Honest limits: relies
+      on the OS print dialog (cashier picks the thermal printer once / sets it as
+      default); 58mm rolls may scale the 72mm layout to fit. LATER upgrade for a
+      one-tap SILENT print = direct ESC/POS via WebUSB / Web Bluetooth (no dialog);
+      plus a dedicated KOT (kitchen ticket) print — see the KOT item below.
+- [ ] **Phase 3b — automated EMAIL / SMTP bill delivery (design decided 2026-06-25).**
+      Today email = a `mailto:` the cashier sends by hand; this is the automatic
+      server-side version. Open questions resolved:
+      • WHO sends: send from OUR platform address (e.g. bills@guhya.co.in), NOT
+        the restaurant's own email. Set From display-name = the restaurant's name
+        and Reply-To = the restaurant's own contact email, so the mail reads as
+        "Cafe Gopala <bills@guhya.co.in>" and customer replies go to the cafe.
+        Standard SaaS pattern (Square/Stripe receipts). Restaurants DON'T run
+        their own mail — they just set an optional reply-to/contact email.
+        (Sending AS their Gmail is rejected — we can't SPF/DKIM-sign for gmail.com,
+        and an app-password per owner is high-friction + a stored-password
+        liability. So: platform-sends-on-behalf-of.)
+      • PREREQ: add `Customer.email` (capture in the bill customer bar) — can't
+        auto-email without the address. Add `tenant.reply_to_email` (+
+        `email_enabled`) to Settings.
+      • MAILCOW must be configured to SEND (installed but bare). Checklist (mostly
+        infra — mirror into avyangah-infra):
+          - sending domain + mailbox/relay account (bills@…),
+          - DELIVERABILITY DNS (make-or-break): SPF, DKIM (mailcow generates the
+            key → publish the TXT), DMARC, and PTR / reverse-DNS on the Hetzner IP
+            (missing PTR → Gmail rejects); check the IP isn't on blocklists,
+          - confirm Hetzner isn't blocking OUTBOUND port 25 (often blocked by
+            default; without it the box can't deliver to other mail servers),
+          - Django EMAIL_* → mailcow submission (587 STARTTLS, auth as bills@…),
+            creds in avyangah-infra secrets/env, NEVER in code.
+      • Make the email backend PLUGGABLE (like the menu-AI provider): plain Django
+        EMAIL_BACKEND/SMTP settings so we can swap mailcow ↔ a transactional API
+        without code changes.
+      • HONEST DELIVERABILITY RISK: self-hosted mail from a fresh domain/IP has no
+        reputation; even with SPF/DKIM/DMARC/PTR perfect, early sends can spam-
+        folder or throttle. Transactional bills (low volume, expected by the
+        recipient) usually inbox OK, but it's the #1 risk. FALLBACK if inboxing is
+        poor: a transactional email API with a free tier — Amazon SES (~free low
+        volume), Brevo (300/day free), Resend (3k/mo free) — they own reputation/
+        deliverability. Decide mailcow-vs-API after testing real placement.
+      • THE ACTUAL "FILE" (PDF bill): wa.me + mailto carry TEXT only — they can't
+        attach a file. A real PDF / thermal receipt as an ATTACHMENT only works
+        over server-side email (SMTP). So "send the customer a proper bill file" =
+        this SMTP path + a PDF generator (sub-task below).
+- [ ] **PDF / printable bill generation.** Render the bill as a PDF (and a thermal
+      2-inch layout) so it can be ATTACHED to the SMTP email above, printed, or
+      downloaded. Reuse ONE bill-render template for screen + PDF + KOT. Needed
+      before email-with-attachment is meaningful (text-only bills don't need it).
+- [ ] **SMS bill channel (NOT free — later).** For customers with no WhatsApp /
+      Telegram / email, SMS is the lowest-common-denominator. In India this needs
+      a provider (MSG91 / Gupshup / Twilio) + DLT template registration + per-SMS
+      cost. Park until there's demand; the printed/thermal receipt is the always-
+      works offline fallback meanwhile.
 - [ ] **Attendance — biometric device integration (Cafe Gopala already OWNS the
       hardware).** They have a Petpooja payroll/attendance biometric marker
       (Bluetooth/WiFi) — refs: posmarket.in petpooja-payroll-attendance device +
