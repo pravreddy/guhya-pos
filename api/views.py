@@ -367,6 +367,43 @@ class OrderViewSet(TenantViewMixin, viewsets.ModelViewSet):
         return self._respond(order.pk)
 
     @action(detail=True, methods=["post"])
+    def set_discount(self, request, pk=None):
+        """Owner/admin applies (or clears) an order-level discount on the fly —
+        flat ₹ or %. ROLE-GATED: cashiers/waiters can't discount. Audited via
+        discount_by (who authorised it). Pass type='none' to remove."""
+        if getattr(request.user, "role", None) not in (User.Role.OWNER, User.Role.ADMIN):
+            return Response({"detail": "Only an owner or admin can apply a discount."}, status=403)
+        order = self.get_object()
+        if order.status in [Order.Status.PAID, Order.Status.CANCELLED]:
+            return Response({"detail": "This order is closed."}, status=400)
+        dtype = request.data.get("type", Order.DiscountType.NONE)
+        if dtype not in Order.DiscountType.values:
+            return Response({"detail": "Invalid discount type."}, status=400)
+        if dtype == Order.DiscountType.NONE:
+            order.discount_type = Order.DiscountType.NONE
+            order.discount_value = Decimal("0")
+            order.discount_reason = ""
+            order.discount_by = None
+            order.save(update_fields=["discount_type", "discount_value",
+                                      "discount_reason", "discount_by", "updated_at"])
+            return self._respond(order.pk, recalc=True)
+        try:
+            value = Decimal(str(request.data.get("value", 0)))
+        except (InvalidOperation, TypeError):
+            return Response({"detail": "Invalid discount value."}, status=400)
+        if value <= 0:
+            return Response({"detail": "Discount must be more than zero."}, status=400)
+        if dtype == Order.DiscountType.PERCENT and value > 100:
+            return Response({"detail": "Percent discount can't exceed 100."}, status=400)
+        order.discount_type = dtype
+        order.discount_value = value
+        order.discount_reason = (request.data.get("reason") or "").strip()[:200]
+        order.discount_by = request.user
+        order.save(update_fields=["discount_type", "discount_value",
+                                  "discount_reason", "discount_by", "updated_at"])
+        return self._respond(order.pk, recalc=True)
+
+    @action(detail=True, methods=["post"])
     def add_line(self, request, pk=None):
         order = self.get_object()
         if order.status in [Order.Status.PAID, Order.Status.CANCELLED]:

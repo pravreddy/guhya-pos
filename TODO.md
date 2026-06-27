@@ -360,8 +360,24 @@ at the same time — so it's a first-class mode, not an edge case:
 - [ ] **KOT (kitchen order ticket) print** — print/send the order to the kitchen
       (matters for dine-in and busier takeaway counters).
 
-- [ ] **Void / cancel + discount** — cancel an order or a single line, and apply
-      a discount (flat or %). A real till needs these.
+- [x] **Discount — owner/admin on-the-fly (DONE 2026-06-27).** Order-level
+      discount, flat ₹ or %, applied from the cashier bill — but ONLY visible to
+      an owner/admin login (cashiers don't see the button; the server re-checks
+      the role and returns 403 otherwise). Optional reason + who-authorised-it
+      recorded (discount_by) for audit. recalculate() takes the discount off the
+      subtotal THEN charges GST on the reduced amount (discount-then-GST); shows
+      as a "Discount −₹X" line on the screen bill, the printed receipt, and the
+      WhatsApp/Telegram/Email text. Backend: Order gained discount_type / value /
+      amount / reason / by (orders/0005_order_discount); set_discount action,
+      owner/admin only. This is ALSO the prerequisite the coupon engine needs (a
+      coupon = a discount the server authorises from a token).
+      FOLLOW-UP (next): owner-PIN OVERRIDE on the cashier screen so a busy counter
+      doesn't need a full owner login — cashier starts the discount, it stays
+      PENDING until an owner taps their override PIN right there (reuse the
+      attendance-PIN infra). Same audited discount, faster approval path.
+- [ ] **Void / cancel** — cancel a whole order or a single line (the discount
+      half of this old item is DONE above; void is the other half). A real till
+      needs both.
 
 - [ ] **Day-close / sales report** — end-of-day totals: cash vs UPI vs card,
       order count, total sales — so the owner reconciles the till each night.
@@ -439,7 +455,11 @@ WhatsApp-first, commission-free POS can actually win).
 - [ ] Owner dashboard: live + historical, downloadable. (Forecasting later.)
 
 ### C. CRM + loyalty + coupons (you asked) — THE WEDGE / differentiator
+> Coupons, per-customer QR offers, store-credit, and customer SELF-REGISTRATION
+> are now designed in detail in the "Promotions, coupons & customer self-
+> registration" section below (2026-06-27). The bullets here are the headlines.
 - [ ] **Customer database** — capture phone at billing, order history per customer.
+      (DONE — see the customer-profile + phone-lookup item above.)
 - [ ] **Loyalty** — points / visit / spend based; tiers (silver/gold/platinum);
       redemption at billing.
 - [ ] **Coupons / schemes / discounts** — codes, flat/%, validity, item/category.
@@ -468,6 +488,132 @@ the DIFFERENTIATED wedge — they grow the restaurant's revenue, break aggregato
 dependence, and fit our AI/voice strengths and "friend to the restaurant, flat
 fee not commission" positioning. Do the A table-stakes (esp. inventory, modifiers,
 reports, offline, GST) as needed so we can actually replace the current till.
+
+## Promotions, coupons & customer self-registration — DESIGN (2026-06-27)
+
+The ACTION layer on top of the customer data we now capture: per-customer offers,
+delivered as a QR, redeemed in-store, single-use. This is how the CRM wedge
+actually makes the restaurant money. Designed before Cafe Gopala's ~August opening
+so we can launch with a "scan to join + welcome offer" hook.
+
+THE ONE RULE THAT KEEPS IT SAFE: the QR / code encodes only an OPAQUE RANDOM
+TOKEN, never the discount value. The SERVER holds the truth (owner, value, expiry,
+used-or-not) and is the only thing that authorises a redemption. A screenshot or a
+forwarded QR is then harmless — the second scan just fails "already redeemed." The
+client is never trusted; tenant + expiry + single-use are all checked server-side
+inside a row-locked transaction.
+
+- [ ] **PREREQUISITE — order-level discount (this is item #6 "void/discount").**
+      Redeeming a coupon means subtracting a discount from a bill, so the Order
+      needs a discount amount/line and recalculate() must subtract it (then decide
+      + document whether GST is pre- or post-discount). Build this FIRST; it's
+      independently needed for the till anyway (staff comps, manager overrides).
+      Coupons are then just "a discount the server authorises from a token."
+- [ ] **Coupon engine — MVP (Phase A).** One tenant-scoped `Coupon` row per
+      coupon, bound to ONE customer (the phone-keyed profile):
+        - `token` (random, unguessable) + a short human `code` (e.g. GOPALA-7K2P)
+          the cashier can type — every coupon carries BOTH (QR for the diner, code
+          for the counter).
+        - `customer` FK (tenant-scoped), `type` (percent / flat ₹), `value`,
+          `max_discount` cap (for percent), optional `min_order` to qualify.
+        - `valid_from` / `valid_until` (the 1-month window).
+        - `status` (active / redeemed / expired / cancelled) + `redeemed_at` +
+          `redeemed_order` for audit.
+      ENFORCEMENT: redeem inside a `select_for_update()` transaction that flips
+      status active→redeemed atomically, so two simultaneous scans can't both win;
+      re-check tenant + not-expired + status==active every time. SINGLE-USE by
+      design; the QR being a token (not the value) is what makes a copy worthless.
+- [ ] **Phone-binding (the personalisation).** A coupon applies only if the
+      ORDER's customer phone matches the coupon's customer — so the cashier sets
+      the customer on the bill first (supported now). Nice side effect: using a
+      coupon identifies the diner, feeding the CRM further. (A diner handing their
+      phone to a friend is them gifting their own coupon — acceptable.)
+- [ ] **Redemption flow + the scanner question.** At billing: set customer →
+      "Apply coupon" → either TYPE the short code (v1 default — zero new deps,
+      works on any device) or SCAN the QR. In-browser QR SCANNING needs a reader
+      lib (jsQR / html5-qrcode) + camera permission — more than the QR GENERATOR
+      we already use — so camera scan is a LATER add (Phase D). Every coupon
+      carries both forms; lean on the typed code first.
+- [ ] **Delivery reuses what we shipped.** Generate coupon → render its QR (same
+      qrcode lib) → send over WhatsApp / Telegram / Email. Owner/admin generates
+      coupons by hand for now; campaigns auto-generate later (Phase B).
+- [ ] **Fraud controls (unglamorous but essential — money-touching code).**
+        - Coupon CREATION = owner/admin or system/campaign ONLY, never cashier
+          (else a cashier mints discounts for friends).
+        - EVERY redemption audited (who / when / which order) → spot a cashier who
+          redeems suspiciously often.
+        - Server enforces tenant + expiry + single-use; client never trusted.
+- [ ] **Customer SELF-REGISTRATION (the launch hook — "scan to join").** A public
+      per-tenant QR / link (table tent, counter, bill) → a lightweight public
+      form: phone + name + optional email/Telegram + EXPLICIT consent →
+      creates/updates the tenant-scoped `Customer` with marketing_consent=true →
+      OPTIONALLY auto-issues a configurable WELCOME coupon (owner sets on/off,
+      value, validity). Design choices:
+        - NO diner login/account (consistent with phone-as-ID; diners won't make
+          accounts). Registration just submits details + opt-in.
+        - Self-reg is the CLEANEST consent capture — the diner opts in themselves.
+        - It's our FIRST public (unauthenticated) DINER-facing surface — needs
+          tenant resolution via a per-tenant slug / QR token, and a new public
+          route (distinct from the owner-facing signup page in go-to-market).
+      ABUSE DEFENCE (honest): a public endpoint can be spammed, BUT the redemption-
+      binding makes fake signups financially HARMLESS — a bot creating 1000 fake
+      phones mints 1000 coupons that can NEVER be redeemed (nobody shows up at the
+      counter with those phones). So: add rate-limiting + a soft cap, rely on
+      redemption-binding for the money safety, and DEFER phone-OTP verification
+      (OTP = SMS cost + DLT in India) until/unless fake signups pollute the CRM.
+- [ ] **Store-credit / cashback WALLET (Phase C — the "amount added" model, LATER).**
+      What Praveen also described ("receive the amount to be added") is a DIFFERENT
+      mechanic from a discount: a BALANCE on the customer spent on a FUTURE visit
+      ("spend ₹500 → ₹50 credit"). This needs a proper CREDIT LEDGER (top-ups,
+      spends, balance, per-entry expiry) so the books stay correct — do NOT bundle
+      it with the discount-coupon MVP. Discount coupons prove the loop first; the
+      wallet is its own phase with accounting rigour.
+
+PHASING (build order):
+  A (MVP): order discount (#6) → single-use %/flat coupons bound to customer,
+           1-month validity, owner-generated, delivered via existing channels,
+           redeemed by TYPED short code at the counter.
+         + Self-registration page (phone/name/consent) + optional welcome coupon —
+           the August-launch list-building hook.
+  B: campaigns — bulk-generate to a segment (lapsed 60d, birthday), auto-trigger,
+           redemption analytics. (Ties to section C/D win-back + AI personalisation.)
+  C: store-credit / cashback wallet with a real ledger.
+  D: in-browser camera QR scanning.
+
+HONEST SEQUENCING for the launch: to have coupons ready for ~August, build order
+discounts (#6) FIRST (prerequisite + needed for the till regardless), THEN the
+coupon MVP, THEN self-registration + welcome coupon. Doable in the window, but it's
+money-touching code — do it carefully, not rushed. If time gets tight, ship self-
+registration that just COLLECTS the list + consent at launch (strong on its own)
+and switch on welcome coupons the moment the engine lands.
+
+ONE PHONE = ONE WELCOME COUPON (Praveen 2026-06-27): the self-reg upsert is keyed
+on phone, so re-registering the same number just finds the existing Customer and
+issues NO second welcome coupon — registration abuse can't mint extra coupons.
+Enforce with a flag/record (e.g. `welcome_coupon_issued` on Customer, or a unique
+(tenant, customer, campaign) constraint on Coupon) so it's airtight, not just UI.
+
+- [ ] **Diner "account" = a MAGIC-LINK PROFILE, NOT a password login (Praveen's
+      "create account later").** Keep phone as the ID; do NOT give diners a
+      username/password (they abandon those). "Account" for a diner means a richer
+      profile + history they reach via a ONE-TAP MAGIC LINK we send over WhatsApp /
+      email / Telegram (link carries a signed, expiring token — no password). That
+      link opens THEIR page (verified by the token, not a login) to see past
+      orders + coupons, reorder, or book a table. Same phone-as-ID principle, zero
+      password friction. This is profile ENRICHMENT on the data we already capture
+      — build after the coupon/self-reg MVP.
+- [ ] **Online ordering + table reservation = the DESTINATION this feeds (bigger
+      build; sequence AFTER coupons/self-reg, don't bundle).** The customer data,
+      consent, and the public per-tenant surface we build for self-registration
+      are exactly the on-ramp for: (a) a public diner-facing MENU + cart + order
+      → routed into the kitchen (+ payment), and (b) TABLE RESERVATION (slot /
+      calendar model, capacity, confirmation messages). Each is substantial on its
+      own — they are the right destination, not the next sprint. Honest order of
+      the whole arc: customer capture (DONE) → coupons + self-registration (the
+      August hook) → magic-link diner profile → online ordering + reservations.
+      Nothing earlier is wasted; each step makes the next cheaper. (Ties to the
+      existing "online ordering + item-receipt verification" and "Reservations /
+      waitlist" bullets — this is the customer-data-driven framing of them.)
 
 ## Go-to-market: self-service onboarding (GATED: only AFTER POS is proven end-to-end on pos.guhya.co.in with Cafe Gopala)
 

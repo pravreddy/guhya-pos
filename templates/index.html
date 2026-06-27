@@ -264,8 +264,13 @@
         L.push(l.qty + ' x ' + l.name_snapshot + (l.is_half ? ' (half)' : '') + '  ' + rupee(l.line_total));
       });
       L.push('');
-      if (Number(order.tax_total) > 0) {
+      if (Number(order.discount_amount) > 0 || Number(order.tax_total) > 0) {
         L.push('Subtotal: ' + rupee(order.subtotal));
+      }
+      if (Number(order.discount_amount) > 0) {
+        L.push('Discount: -' + rupee(order.discount_amount));
+      }
+      if (Number(order.tax_total) > 0) {
         L.push('GST: ' + rupee(order.tax_total));
       }
       L.push('Total: ' + rupee(order.total));
@@ -299,10 +304,11 @@
       ).join('');
       const meta = [order.table_name || '', order.token != null ? 'Token ' + order.token : '', 'Bill #' + order.id]
         .filter(Boolean).join('  ·  ');
-      const tax = Number(order.tax_total) > 0
-        ? '<div class="row"><span>Subtotal</span><span>' + rupee(order.subtotal) + '</span></div>' +
-          '<div class="row"><span>GST</span><span>' + rupee(order.tax_total) + '</span></div>'
-        : '';
+      const hasDisc = Number(order.discount_amount) > 0;
+      const hasTax = Number(order.tax_total) > 0;
+      const mid = ((hasDisc || hasTax) ? '<div class="row"><span>Subtotal</span><span>' + rupee(order.subtotal) + '</span></div>' : '') +
+        (hasDisc ? '<div class="row"><span>Discount</span><span>-' + rupee(order.discount_amount) + '</span></div>' : '') +
+        (hasTax ? '<div class="row"><span>GST</span><span>' + rupee(order.tax_total) + '</span></div>' : '');
       const paid = Number(order.amount_paid) > 0
         ? '<div class="row"><span>Paid</span><span>' + rupee(order.amount_paid) + '</span></div>' : '';
       const cust = order.customer_phone
@@ -316,7 +322,7 @@
         (meta ? '<div class="center muted">' + meta + '</div>' : '') +
         '<div class="hr"></div>' +
         '<table>' + rows + '</table>' +
-        '<div class="hr"></div>' + tax +
+        '<div class="hr"></div>' + mid +
         '<div class="row b big"><span>Total</span><span>' + rupee(order.total) + '</span></div>' +
         paid + cust +
         '<div class="center muted thanks">Thank you, please visit again!</div>' +
@@ -386,7 +392,8 @@
     }
 
     // ---------------- Cashier ----------------
-    function Cashier() {
+    function Cashier({ auth }) {
+      const isManager = !!auth && (auth.role === 'owner' || auth.role === 'admin');
       const [tables, setTables] = useState([]);
       const [menu, setMenu] = useState([]);
       const [active, setActive] = useState([]);       // active orders (occupancy + takeaway list)
@@ -394,6 +401,7 @@
       const [selKind, setSelKind] = useState(null);   // 'table' | 'takeaway' | null
       const [selTable, setSelTable] = useState(null); // table object when selKind==='table'
       const [pay, setPay] = useState(false);
+      const [discountOpen, setDiscountOpen] = useState(false);
       const [payResult, setPayResult] = useState(null);
       const [tenantInfo, setTenantInfo] = useState(null);
       const [q, setQ] = useState('');
@@ -465,6 +473,10 @@
         } else if (channel === 'email') {
           window.open(mailtoLink('Your bill from ' + ((tenantInfo && tenantInfo.name) || 'us'), text), '_blank');
         }
+      };
+      const applyDiscount = async (type, value, reason) => {
+        const o = await api('/orders/' + order.id + '/set_discount/', { method: 'POST', body: { type, value, reason } });
+        setOrder(o); refreshActive();
       };
       const onPaid = async (o) => {
         if (o.status === 'paid') {
@@ -565,8 +577,11 @@
             </div>
             ${order && html`
               <div class="bill-foot">
+                ${(Number(order.tax_total) > 0 || Number(order.discount_amount) > 0) && html`
+                  <div class="row"><span class="muted">Subtotal</span><span>${rupee(order.subtotal)}</span></div>`}
+                ${Number(order.discount_amount) > 0 && html`
+                  <div class="row"><span class="muted">Discount${order.discount_type === 'percent' ? ' (' + order.discount_value + '%)' : ''}</span><span>−${rupee(order.discount_amount)}</span></div>`}
                 ${Number(order.tax_total) > 0 && html`
-                  <div class="row"><span class="muted">Subtotal</span><span>${rupee(order.subtotal)}</span></div>
                   <div class="row"><span class="muted">GST</span><span>${rupee(order.tax_total)}</span></div>`}
                 <div class="row total"><span>Total</span><span>${rupee(order.total)}</span></div>
                 ${Number(order.amount_paid) > 0 && html`
@@ -575,6 +590,10 @@
                 <button class="btn accent" style=${{ width: '100%', marginTop: '10px' }}
                         disabled=${order.lines.length === 0} onClick=${() => setPay(true)}>
                   Take payment · ${rupee(order.balance)}</button>
+                ${isManager && html`
+                  <button class="btn ghost sm" style=${{ width: '100%', marginTop: '8px' }}
+                          disabled=${order.lines.length === 0} onClick=${() => setDiscountOpen(true)}>
+                    ${Number(order.discount_amount) > 0 ? 'Edit discount · −' + rupee(order.discount_amount) : 'Add discount'}</button>`}
                 <div style=${{ marginTop: '10px' }}>
                   <div style=${{ fontSize: '12px', color: 'var(--ink-soft)', marginBottom: '5px' }}>Send bill</div>
                   <div style=${{ display: 'flex', gap: '6px' }}>
@@ -590,6 +609,7 @@
           </div>
 
           ${pay && html`<${PayModal} order=${order} tenant=${tenantInfo} onClose=${() => setPay(false)} onPaid=${onPaid} />`}
+          ${discountOpen && order && html`<${DiscountModal} order=${order} onApply=${applyDiscount} onClose=${() => setDiscountOpen(false)} />`}
           ${payResult && html`<${PostPayModal} result=${payResult} onClose=${() => setPayResult(null)} />`}
         </div>`;
     }
@@ -669,6 +689,50 @@
                   🖨 Print bill (customer + restaurant copy)</button>
               </div>`}
             <button class="btn accent" style=${{ width: '100%', marginTop: '18px' }} onClick=${onClose}>Done</button>
+          </div>
+        </div>`;
+    }
+
+    // Owner/admin on-the-fly discount on the open bill (flat ₹ or %). Cashiers
+    // never see the entry point; the server also re-checks the role.
+    function DiscountModal({ order, onApply, onClose }) {
+      const cur = order.discount_type && order.discount_type !== 'none';
+      const [type, setType] = useState(cur ? order.discount_type : 'flat');
+      const [value, setValue] = useState(cur && Number(order.discount_value) ? String(order.discount_value) : '');
+      const [reason, setReason] = useState(order.discount_reason || '');
+      const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+      const apply = async () => {
+        setErr(''); setBusy(true);
+        try { await onApply(type, value === '' ? 0 : value, reason); onClose(); }
+        catch (e) { setErr(e.message); setBusy(false); }
+      };
+      const remove = async () => {
+        setErr(''); setBusy(true);
+        try { await onApply('none', 0, ''); onClose(); }
+        catch (e) { setErr(e.message); setBusy(false); }
+      };
+      const inp = { width: '100%', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '10px' };
+      return html`
+        <div class="modal-bg" onClick=${onClose}>
+          <div class="modal" onClick=${e => e.stopPropagation()}>
+            <h3>Discount · ${order.table_name || ('Order #' + order.id)}</h3>
+            ${err && html`<div class="err">${err}</div>`}
+            <div class="pay-methods">
+              <button class=${type === 'flat' ? 'sel' : ''} onClick=${() => setType('flat')}>Flat ₹</button>
+              <button class=${type === 'percent' ? 'sel' : ''} onClick=${() => setType('percent')}>Percent %</button>
+            </div>
+            <div class="field"><label>${type === 'percent' ? 'Percent off (0–100)' : 'Amount off (₹)'}</label>
+              <input value=${value} inputmode="decimal" autoFocus onChange=${e => setValue(e.target.value)} style=${inp} /></div>
+            <div class="field"><label>Reason (optional)</label>
+              <input value=${reason} placeholder="e.g. regular customer, owner comp" onChange=${e => setReason(e.target.value)} style=${inp} /></div>
+            <div style=${{ fontSize: '12px', color: 'var(--ink-soft)', marginBottom: '12px' }}>
+              Current total ${rupee(order.total)}. The discount comes off before GST.</div>
+            <div style=${{ display: 'flex', gap: '8px' }}>
+              ${cur && html`<button class="btn ghost" onClick=${remove} disabled=${busy}>Remove</button>`}
+              <button class="btn ghost" style=${{ flex: 1 }} onClick=${onClose}>Cancel</button>
+              <button class="btn accent" style=${{ flex: 1 }} disabled=${busy || value === '' || Number(value) <= 0} onClick=${apply}>
+                ${busy ? 'Saving…' : 'Apply'}</button>
+            </div>
           </div>
         </div>`;
     }

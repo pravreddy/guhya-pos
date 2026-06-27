@@ -65,6 +65,11 @@ class Order(TenantAwareModel):
         PAID = "paid", "Paid"
         CANCELLED = "cancelled", "Cancelled"
 
+    class DiscountType(models.TextChoices):
+        NONE = "none", "None"
+        FLAT = "flat", "Flat ₹"
+        PERCENT = "percent", "Percent"
+
     table = models.ForeignKey(Table, null=True, blank=True,
                               on_delete=models.SET_NULL, related_name="orders")
     # optional diner attached at billing (CRM). SET_NULL so deleting a customer
@@ -84,6 +89,16 @@ class Order(TenantAwareModel):
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # order-level discount, applied by owner/admin on the fly (flat ₹ or %).
+    # discount_value = what was entered; discount_amount = the ₹ actually taken
+    # off (computed in recalculate); discount_by = who authorised it (audit).
+    discount_type = models.CharField(max_length=8, choices=DiscountType.choices,
+                                     default=DiscountType.NONE)
+    discount_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_reason = models.CharField(max_length=200, blank=True)
+    discount_by = models.ForeignKey("accounts.User", null=True, blank=True,
+                                    on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -95,7 +110,9 @@ class Order(TenantAwareModel):
 
     def recalculate(self, save=True):
         """Recompute totals from the lines. GST is added on top (exclusive).
-        If the restaurant has GST disabled, tax is zero and total == subtotal."""
+        If the restaurant has GST disabled, tax is zero and total == subtotal.
+        An order-level discount (owner/admin) comes off the subtotal first, then
+        GST is charged on the discounted amount (discount-then-GST)."""
         subtotal = Decimal("0")
         tax = Decimal("0")
         gst_on = getattr(self.tenant, "gst_enabled", True) if self.tenant_id else True
@@ -103,11 +120,22 @@ class Order(TenantAwareModel):
             subtotal += line.line_total
             if gst_on:
                 tax += line.line_total * (line.gst_rate or Decimal("0")) / Decimal("100")
+        disc = Decimal("0")
+        if self.discount_type == self.DiscountType.FLAT:
+            disc = min(self.discount_value or Decimal("0"), subtotal)
+        elif self.discount_type == self.DiscountType.PERCENT:
+            disc = subtotal * (self.discount_value or Decimal("0")) / Decimal("100")
+            if disc > subtotal:
+                disc = subtotal
+        if subtotal > 0 and disc > 0:
+            tax = tax * (subtotal - disc) / subtotal      # GST on the discounted amount
         self.subtotal = subtotal.quantize(Decimal("0.01"))
+        self.discount_amount = disc.quantize(Decimal("0.01"))
         self.tax_total = tax.quantize(Decimal("0.01"))
-        self.total = (self.subtotal + self.tax_total).quantize(Decimal("0.01"))
+        self.total = (self.subtotal - self.discount_amount + self.tax_total).quantize(Decimal("0.01"))
         if save:
-            self.save(update_fields=["subtotal", "tax_total", "total", "updated_at"])
+            self.save(update_fields=["subtotal", "discount_amount", "tax_total",
+                                     "total", "updated_at"])
 
 class OrderLine(TenantAwareModel):
     class Status(models.TextChoices):
